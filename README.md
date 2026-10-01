@@ -34,11 +34,11 @@ citations — with every model running locally and no data leaving the machine.
 
 | Component | Version | Notes |
 |---|---|---|
-| RAGFlow | 0.27.2 | built for arm64 by this project — no official arm64 images exist |
+| RAGFlow | 0.27.2 | built for arm64 by this project — no official arm64 images exist ([how](docs/BUILD.md)) |
 | Elasticsearch | 8.11.3 | the version RAGFlow pins |
 | MySQL | 8.0 | RAGFlow metadata |
 | Valkey | 8 | RAGFlow task queue |
-| MinIO (pgsty fork) | pinned | official MinIO images were withdrawn |
+| Object storage (pgsty/silo) | pinned by RAGFlow | maintained MinIO fork; official MinIO images were withdrawn |
 | vLLM | pinned per model | official images from Docker Hub, pinned by digest |
 
 Default models: Gemma 4 26B-A4B (LLM), deepvk/USER-bge-m3 (embeddings),
@@ -47,7 +47,7 @@ BAAI/bge-reranker-v2-m3 (reranker). See [catalog/models.yaml](catalog/models.yam
 ## Roadmap
 
 - [x] **Stage 1** — decisions and compatibility review ([docs/DECISIONS.md](docs/DECISIONS.md))
-- [ ] **Stage 2** — RAGFlow 0.27.2 arm64 image
+- [ ] **Stage 2** — RAGFlow 0.27.2 arm64 image ([docs/BUILD.md](docs/BUILD.md))
 - [ ] **Stage 3** — `single` mode: install, automatic model setup, built-in acceptance test
 - [ ] **Stage 4** — model catalog beyond the defaults
 - [ ] **Stage 5** — `stack` mode on two DGX Spark units
@@ -68,8 +68,9 @@ BAAI/bge-reranker-v2-m3 (reranker). See [catalog/models.yaml](catalog/models.yam
 
 ## License
 
-[Apache License 2.0](LICENSE). Third-party components run as separate,
-unmodified containers under their own licenses.
+[Apache License 2.0](LICENSE). Third-party components run as separate
+containers under their own licenses; the RAGFlow image is built from unmodified
+upstream source with one documented build-recipe change.
 
 RAGSpark is an independent project, not affiliated with or endorsed by NVIDIA
 or InfiniFlow. NVIDIA, DGX and DGX Spark are trademarks of NVIDIA Corporation;

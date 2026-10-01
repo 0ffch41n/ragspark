@@ -25,7 +25,9 @@ re-check them before any version bump.
 - **How:** all code is written from scratch. No files or fragments are copied
   from other projects, so no third-party notices are inherited. Third-party
   software (RAGFlow, Elasticsearch, MySQL, Valkey, MinIO fork, vLLM) runs as
-  separate, unmodified containers under its own licenses.
+  separate containers under its own licenses. RAGFlow's source is used
+  unmodified; its image is built with one RAGSpark change to the build recipe
+  (see D3), marked in the patched Dockerfile.
 - **Risk:** copying any third-party file later would require keeping its
   copyright notices — avoid, or record it here.
 
@@ -43,7 +45,15 @@ re-check them before any version bump.
   and unixODBC on arm64.
 - **How:** build from the `v0.27.2` tag on a DGX Spark (native arm64, no
   emulation), slim edition (no bundled embedding models — vLLM provides them),
-  publish to our own registry, reference by digest.
+  publish to GHCR as `ghcr.io/0ffch41n/ragspark-ragflow`, reference by digest.
+  Recipe: [BUILD.md](BUILD.md).
+- **Only deviation from upstream:** the Chrome/ChromeDriver steps run on x86_64
+  only — the archives in `ragflow_deps` are x86 builds that cannot run on
+  arm64. Browser-driven features (e.g. web crawling in agents) are unavailable
+  on arm64.
+- **Verified (2026-10-01):** the unmodified upstream build completed on a DGX
+  Spark; with RAGFlow's own compose, the server reported `v0.27.2`, served the
+  web UI, and Elasticsearch, MySQL, Valkey and the object store were healthy.
 - **Risks:**
   - 0.27.x is a dead-end line long-term. The RAGFlow version is therefore a
     swappable component; moving to 1.0 is a separate decision once arm64 is
@@ -61,14 +71,14 @@ re-check them before any version bump.
   the GPU on GB10); backups through the snapshot API, not a tar of a live
   data directory.
 
-## D5. Object storage — pgsty/minio
+## D5. Object storage — pgsty/silo
 
 - **What:** storage for the original uploaded files.
 - **Why:** MinIO stopped publishing images; the Docker Hub repositories were
   removed in September 2026 and anonymous Quay pulls were denied when tested
-  from the deployment network (2026-09-28). RAGFlow's own compose still pins a
-  frozen MinIO image. The pgsty fork is a maintained, multi-arch drop-in.
-- **How:** `pgsty/minio` and `pgsty/mc`, pinned.
+  from the deployment network (2026-09-28). RAGFlow 0.27.2 itself pins
+  `pgsty/silo:RELEASE.2026-08-06T00-00-00Z`, pgsty's maintained MinIO fork.
+- **How:** use the version RAGFlow pins; arm64 availability confirmed.
 - **Plan B:** any other S3-compatible storage RAGFlow supports.
 
 ## D6. Inference — vLLM, official images, pinned per model
@@ -108,6 +118,14 @@ re-check them before any version bump.
   registers the models. The 0.27 model-provider interface was redesigned, so
   request formats are captured from a live 0.27.2 install before automation is
   written.
+- **Administrator:** on first start the admin server creates the superuser
+  `admin@ragflow.io` with the password from `ADMIN_DEFAULT_PASSWORD`. The
+  installer sets a random value, so there is no race for the first sign-up.
+  Verified: the superuser signs in to the regular web UI.
+- **Users:** model instances belong to a tenant, so models are configured once
+  in the administrator's tenant and other people are invited through **Team**.
+  Open sign-up is disabled with `REGISTER_ENABLED=0` and `ENABLE_REGISTER=0`
+  (verified: the sign-up button disappears).
 
 ## D9. Model catalog
 
@@ -143,6 +161,31 @@ re-check them before any version bump.
 3. Only the web entry point faces the network; other ports bind to `127.0.0.1`.
 4. An install is complete only when a RAG query returns a cited answer.
 5. Registries are unreliable: offline bundle and image mirror are first-class.
+
+## D13. Registry access
+
+- **What:** how images are fetched.
+- **Why:** on 2026-10-01 Docker Hub completed the TLS handshake in 15–20 s from
+  the deployment network, while Docker gives up after 10 s. GitHub, PyPI, GHCR
+  and `mirror.gcr.io` answered in under 0.2 s at the same time. IPv6 to Docker
+  Hub failed instantly and was not the cause.
+- **How:**
+  - the preflight check measures registry latency, separately over IPv4 and
+    IPv6, not just reachability;
+  - a registry mirror (`mirror.gcr.io`) is an optional, declared change to
+    `/etc/docker/daemon.json`, recorded in the install manifest and reverted on
+    uninstall;
+  - RAGSpark's own images live on GHCR.
+
+## Open questions
+
+- **NATS.** RAGFlow 0.27.2 logs `ingestor: mq_type nats`, but its compose does
+  not start NATS in the Python deployment; task queues appear in Valkey.
+  Verify with a real document ingestion in stage 3.
+- **Superuser e-mail.** Whether `admin@ragflow.io` can be changed through
+  configuration is unverified.
+- **Sign-up on the server side.** The UI hides sign-up; whether the API rejects
+  registration requests is unverified.
 
 ---
 
