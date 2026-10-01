@@ -1,0 +1,24 @@
+# Secrets and local configuration - never commit
+.env
+*.env.local
+secrets/
+credentials*.txt
+
+# Runtime artefacts
+*.log
+*.pid
+
+# Offline bundles and image exports
+*.tar
+*.tar.gz
+bundles/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store

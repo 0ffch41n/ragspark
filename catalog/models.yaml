@@ -1,0 +1,109 @@
+# RAGSpark model catalog - DRAFT, schema v0
+#
+# Field meanings:
+#   serving_verified  vLLM served this model on real DGX Spark hardware with
+#                     exactly this image and these flags (facts recorded below)
+#   validated         passed the RAGSpark acceptance test (document upload ->
+#                     question -> cited answer). Stays false until stage 3.
+#   license           must be checked on the model card before release; the
+#                     wizard shows it before download
+#
+# Every image is pinned by digest. Never use floating tags in a release.
+
+schema: 0
+
+hardware:
+  dgx-spark:
+    arch: arm64
+    gpu: GB10
+    cuda_sm: "12.1"
+    usable_memory_gib: 121      # unified CPU+GPU memory as reported by the OS
+    driver_branch: "580"        # newer branches regress on GB10
+
+images:
+  vllm-gemma4-cu130:
+    ref: vllm/vllm-openai:gemma4-cu130
+    digest: sha256:0d152595cd940ea1e0890fa190a37b7a86e3f7f0f5048ac3e2e4c14529fea833
+    pulled: "2026-09-28"
+    note: official vLLM image; also serves the pooling models below
+
+models:
+  llm:
+    - id: gemma-4-26b-a4b
+      hf_repo: google/gemma-4-26B-A4B-it
+      served_name: google/gemma-4-26B-A4B-it
+      modes: [single]
+      image: vllm-gemma4-cu130
+      gpu_memory_utilization: 0.60      # ~84 GB: ~50 GB weights + KV cache
+      context:
+        default: 65536
+      vllm_args: [--kv-cache-dtype, fp8, --enable-prefix-caching, --enforce-eager]
+      tool_calling: false               # no tool-call parser configured
+      serving_verified: "2026-09-30 DGX OS 7.5.0, driver 580.178.04, CUDA 13.0"
+      validated: false
+      license: TBD
+
+    - id: qwen-3.8-27b-nvfp4
+      hf_repo: nvidia/Qwen3.8-27B-NVFP4
+      modes: [single]
+      image: TBD                        # community runs use custom images; try official first
+      context:
+        default: 65536
+      serving_verified: false
+      validated: false
+      license: TBD
+      note: candidate
+
+    - id: nemotron-3-super-120b-a12b-nvfp4
+      hf_repo: nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-NVFP4
+      modes: [single]
+      image: TBD                        # upstream recipe uses vllm/vllm-openai:cu130-nightly; pin a digest
+      context:
+        default: 131072
+      vllm_args: [--reasoning-parser, nemotron_v3, --enable-auto-tool-choice, --tool-call-parser, qwen3_coder]
+      serving_verified: false
+      validated: false
+      license: TBD
+      note: >-
+        candidate for the 120B class. The upstream recipe uses
+        gpu_memory_utilization 0.85, which leaves too little memory for
+        RAGFlow, embeddings and reranker - must be tuned down.
+
+    - id: gpt-oss-120b
+      hf_repo: openai/gpt-oss-120b
+      modes: [single, stack]
+      image: TBD
+      serving_verified: false
+      validated: false
+      license: TBD
+      note: candidate for the 120B class; MXFP4 weights
+
+  embedding:
+    - id: user-bge-m3
+      hf_repo: deepvk/USER-bge-m3
+      image: vllm-gemma4-cu130
+      entrypoint: [/usr/bin/env]        # image entrypoint is `vllm serve`
+      vllm_args: [--runner, pooling, --gpu-memory-utilization, "0.05", --trust-remote-code]
+      context: 8192
+      batch_size: 32                    # batch 1 makes indexing many times slower
+      memory_gb: 2
+      serving_verified: "2026-09-30 DGX OS 7.5.0, driver 580.178.04, CUDA 13.0"
+      validated: false
+      license: TBD
+
+  rerank:
+    - id: bge-reranker-v2-m3
+      hf_repo: BAAI/bge-reranker-v2-m3
+      image: vllm-gemma4-cu130
+      entrypoint: [/usr/bin/env]
+      vllm_args: [--runner, pooling, --gpu-memory-utilization, "0.03", --trust-remote-code]
+      context: 8192
+      memory_gb: 2
+      serving_verified: "2026-09-30 DGX OS 7.5.0, driver 580.178.04, CUDA 13.0"
+      validated: false
+      license: TBD
+
+defaults:
+  llm: gemma-4-26b-a4b
+  embedding: user-bge-m3
+  rerank: bge-reranker-v2-m3
