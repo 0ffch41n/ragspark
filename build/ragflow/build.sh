@@ -11,7 +11,7 @@ set -euo pipefail
 RAGFLOW_REPO="https://github.com/infiniflow/ragflow.git"
 RAGFLOW_TAG="v0.27.2"
 RAGFLOW_COMMIT="a024bea0cd93f39e6652a42bf84dd20c55bc560b"
-REVISION="r1"   # bump whenever the RAGSpark patch set changes
+REVISION="r2"   # bump whenever the RAGSpark patch set changes (r1: Chrome; r2: + reranker input)
 IMAGE="ghcr.io/0ffch41n/ragspark-ragflow"
 TAG="${RAGFLOW_TAG#v}-arm64-${REVISION}"
 WORKDIR="${RAGSPARK_BUILD_DIR:-/var/tmp/ragspark-build}"
@@ -43,9 +43,11 @@ fi
 actual="$(git -C "$src" rev-parse HEAD)"
 [[ "$actual" == "$RAGFLOW_COMMIT" ]] || die "$RAGFLOW_TAG points to $actual, expected $RAGFLOW_COMMIT"
 
-# Always start from the pristine upstream Dockerfile, then apply our patch.
-git -C "$src" checkout --quiet -- Dockerfile
+# Always start from pristine upstream files, then apply the RAGSpark patches.
+# Each patch refuses to run if the code it expects is not there.
+git -C "$src" checkout --quiet -- Dockerfile rag/nlp/search.py
 python3 "$HERE/patch_dockerfile.py" "$src/Dockerfile"
+python3 "$HERE/patch_search.py" "$src/rag/nlp/search.py"
 
 echo "build: building $IMAGE:$TAG"
 docker build --progress=plain --platform linux/arm64 \

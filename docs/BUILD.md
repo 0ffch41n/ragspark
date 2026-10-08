@@ -6,6 +6,23 @@ RAGFlow publishes x86 images only, so RAGSpark builds its own arm64 image
 from the upstream source. This page documents how, and what differs from
 upstream.
 
+## Published images
+
+| Tag | Digest | Patches | Status |
+|---|---|---|---|
+| `0.27.2-arm64-r2` | published after the build | Chrome + reranker input | current |
+| `0.27.2-arm64-r1` | `sha256:1bf5fc0031bff2d775dc8bc1626b2820f9b658b43696a9bb4bdc02a8304f0660` | Chrome | superseded |
+
+`r1`:
+
+```bash
+docker pull ghcr.io/0ffch41n/ragspark-ragflow:0.27.2-arm64-r1@sha256:1bf5fc0031bff2d775dc8bc1626b2820f9b658b43696a9bb4bdc02a8304f0660
+```
+
+`r1` was verified on 2026-10-01 on a DGX Spark: `/ragflow/VERSION` reports `v0.27.2`,
+`/opt/chrome` is absent, and with RAGFlow's own compose the web UI answers
+HTTP 200 and the superuser can sign in.
+
 ## Requirements
 
 - A DGX Spark (native arm64 — no emulation)
@@ -27,22 +44,25 @@ The script:
 
 1. clones RAGFlow at tag `v0.27.2` and **verifies the commit**
    (`a024bea0…`) — if the tag ever moves, it stops;
-2. resets the Dockerfile to upstream and applies the RAGSpark patch;
-3. builds `ghcr.io/0ffch41n/ragspark-ragflow:0.27.2-arm64-r1` with OCI labels
+2. resets the patched files to upstream and applies the RAGSpark patches;
+3. builds `ghcr.io/0ffch41n/ragspark-ragflow:0.27.2-arm64-r2` with OCI labels
    (source, version, upstream commit, license);
 4. with `--push`, pushes the image to GHCR.
 
 ## Differences from upstream
 
-There is exactly one, applied by
-[patch_dockerfile.py](../build/ragflow/patch_dockerfile.py): the Chrome and
-ChromeDriver steps run on x86_64 only. The archives in `ragflow_deps` are
-x86 builds that cannot run on arm64. On x86_64 the original commands run
-unchanged.
+Two, each applied by a script that stops the build if the code it expects is
+not there (for example after a RAGFlow version change):
 
-**Consequence:** RAGFlow features that drive a browser (for example web
-crawling in agents) are not available on arm64. Document parsing, retrieval
-and chat are not affected.
+1. [patch_dockerfile.py](../build/ragflow/patch_dockerfile.py) — the Chrome and
+   ChromeDriver steps run on x86_64 only. The archives in `ragflow_deps` are
+   x86 builds that cannot run on arm64. On x86_64 the original commands run
+   unchanged. **Consequence:** RAGFlow features that drive a browser (for
+   example web crawling in agents) are not available on arm64.
+2. [patch_search.py](../build/ragflow/patch_search.py) — the reranker receives
+   the original chunk text instead of `remove_redundant_spaces(" ".join(tokens))`,
+   which glues Cyrillic and other non-Latin text into one word and cuts rerank
+   scores 2–3x. Details and measurements: [VALIDATION.md](VALIDATION.md), §4.
 
 ## Expected warnings
 
@@ -51,6 +71,14 @@ and chat are not affected.
 | `InvalidBaseImagePlatform: ... ragflow_deps ... linux/amd64` | `ragflow_deps` is an x86-only image, but the build only copies data files from it. Harmless. |
 | `SecretsUsedInArgOrEnv ... GITEE_TOKEN` | Lint note on the upstream Dockerfile; the variable is unused. |
 | `can't import package 'torch'` (at runtime) | The slim edition has no bundled models; vLLM serves them. |
+
+## Third-party software inside the image
+
+The upstream Dockerfile also installs, among other packages, the Microsoft
+ODBC Driver for SQL Server (`msodbcsql18` on arm64, `msodbcsql17` on x86) and
+accepts its EULA during the build; official RAGFlow images ship the x86
+equivalent. Its redistribution terms are Microsoft's — see the open questions
+in [DECISIONS.md](DECISIONS.md).
 
 ## Network notes
 

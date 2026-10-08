@@ -47,10 +47,19 @@ re-check them before any version bump.
   emulation), slim edition (no bundled embedding models — vLLM provides them),
   publish to GHCR as `ghcr.io/0ffch41n/ragspark-ragflow`, reference by digest.
   Recipe: [BUILD.md](BUILD.md).
-- **Only deviation from upstream:** the Chrome/ChromeDriver steps run on x86_64
-  only — the archives in `ragflow_deps` are x86 builds that cannot run on
-  arm64. Browser-driven features (e.g. web crawling in agents) are unavailable
-  on arm64.
+- **Published:** `0.27.2-arm64-r1` (2026-10-01),
+  `sha256:1bf5fc0031bff2d775dc8bc1626b2820f9b658b43696a9bb4bdc02a8304f0660` —
+  superseded by `r2` (patch 2 below), published after it is built.
+- **Deviations from upstream** — two, each applied by a script that refuses to
+  run if the code it expects is not there:
+  1. The Chrome/ChromeDriver steps run on x86_64 only: the archives in
+     `ragflow_deps` are x86 builds that cannot run on arm64. Browser-driven
+     features (e.g. web crawling in agents) are unavailable on arm64.
+  2. The reranker receives the original chunk text (`r2`). Upstream builds the
+     cross-encoder input with `remove_redundant_spaces()`, which deletes every
+     space after a non-Latin letter, so Russian chunks reach the reranker as one
+     long word and rerank scores drop 2–3x. See D15 and
+     [VALIDATION.md](VALIDATION.md); to be reported upstream.
 - **Verified (2026-10-01):** the unmodified upstream build completed on a DGX
   Spark; with RAGFlow's own compose, the server reported `v0.27.2`, served the
   web UI, and Elasticsearch, MySQL, Valkey and the object store were healthy.
@@ -102,8 +111,10 @@ re-check them before any version bump.
 - **What:** `deepvk/USER-bge-m3` (Russian fine-tune of bge-m3, 8192 context)
   and `BAAI/bge-reranker-v2-m3`.
 - **Why:** validated on DGX Spark; about 3 GB of memory together.
-- **How:** embedding batch size 32 (a batch of 1 makes indexing many times
-  slower).
+- **Reranker role:** it is the only component that separates "the answer is
+  in the documents" from "it is not". Embedding similarity scores an unrelated
+  question as high as a real answer (0.58 vs 0.56–0.62), so without the
+  reranker the "not in the knowledge base" response would never trigger (D15).
 - **Note:** the embedding model is fixed per knowledge base; changing it means
   re-indexing. The documentation must say so.
 
@@ -126,6 +137,16 @@ re-check them before any version bump.
   in the administrator's tenant and other people are invited through **Team**.
   Open sign-up is disabled with `REGISTER_ENABLED=0` and `ENABLE_REGISTER=0`
   (verified: the sign-up button disappears).
+- **Verified (2026-10-06):** the request flow was captured from the web UI and
+  automated in [tools/ragflow_models.py](../tools/ragflow_models.py); tested on a
+  live system including re-creation of a deleted instance. The flow is listed
+  in [VALIDATION.md](VALIDATION.md).
+- **Defaults are stored by model id.** Deleting and re-creating an instance
+  leaves the default pointing to a deleted model; the UI shows a bare id with a
+  warning sign. The script compares ids, not names, and re-assigns.
+- **The default reranker is not applied everywhere:** retrieval testing and new
+  chats start without one. The installer sets it explicitly on the chats it
+  creates (D15).
 
 ## D9. Model catalog
 
@@ -177,15 +198,88 @@ re-check them before any version bump.
     uninstall;
   - RAGSpark's own images live on GHCR.
 
+## D14. Document parsing — plain text layer for PDF
+
+- **What:** how PDFs become text before chunking.
+- **Decision:** PDF parser **Naive** (the PDF's own text layer, labelled
+  "Plain Text" in the code). DeepDOC is not used for Russian documents.
+- **Why:** DeepDOC's OCR model recognises CJK and Latin only, so Cyrillic comes
+  out as Latin look-alikes (`Pa3beM` for «Разъем»). DeepDOC also discards the
+  text layer of a whole page when more than 40% of its characters are ASCII
+  punctuation from embedded subset fonts — table-of-contents dot leaders
+  trigger it — and then OCRs the page. On a 39-page Russian manual:
+
+  | Parser | Cyrillic share | Garbled words | Questions found |
+  |---|---|---|---|
+  | DeepDOC | 0.665 | 194 | 4 of 8 |
+  | Naive | **0.835** (= text layer) | **0** | 5 of 8 → 8 of 8 with D15 |
+
+- **Trade-offs:** Naive flattens tables into lines (still readable, retrieval
+  works) and cannot read scans.
+- **Open:** scanned Russian documents need another parser — Qwen 3.8 as a
+  vision model, or Docling — measured with
+  [tools/rag_eval.py](../tools/rag_eval.py) before a choice is made.
+
+## D15. Retrieval defaults — reranker, vector weight 0.7, threshold 0.1
+
+- **Decision:** reranker `bge-reranker-v2-m3` on, vector similarity weight
+  **0.7**, similarity threshold **0.1**, rerank candidates 64, top N 8, with
+  patch 2 of D3.
+- **Why:** final score = term weight × keyword match + vector weight × rerank
+  score. Keyword matching is weak for Russian (inflections, and 60% of it comes
+  from exact pairs of adjacent words), so the reranker must dominate. On 8
+  questions with answers and 2 without, after patch 2:
+
+  | Setup | Answers found | No-answer rejected |
+  |---|---|---|
+  | RAGFlow defaults (0.3 / 0.2), reranker | 6 of 8 | 1 of 2 |
+  | reranker, 0.7 / 0.2 | 7 of 8 | 2 of 2 |
+  | **reranker, 0.7 / 0.1** | **8 of 8** | **2 of 2** |
+  | no reranker, 0.7 / 0.2 or 0.5 | 8 of 8 | 0 of 2 |
+
+- **How:** the installer applies these to the chats it creates. Settings in
+  the UI's retrieval testing page are not saved, so users creating their own
+  chats are told to set them.
+- **Risk:** measured on one document and 10 questions; the margin below 0.1 is
+  not measured yet. The acceptance test re-checks every install.
+
+## D16. Default LLM — Qwen 3.8 27B NVFP4 with MTP
+
+- **Decision:** `Inferact/Qwen3.8-27B-NVFP4` on the official vLLM 0.27.1
+  image, multi-token prediction with 3 speculative tokens, thinking disabled
+  and sampling (temperature 0.7, top-p 0.8, top-k 20) set on the server. Flags
+  are in the [catalog](../catalog/models.yaml).
+- **Why:** strong open model in its size class, Apache-2.0, native tool
+  calling, decode speed nearly flat on long contexts. In Russian probes
+  (30 answers) it never mixed in other scripts and cited sources correctly.
+- **Measured:** 10.2 tok/s per user without MTP, **17.1** with MTP (19–21 on
+  answers drawn from context); 8 concurrent requests served, ~90 tok/s
+  aggregate. Thinking disabled on the server because RAGFlow does not pass the
+  switch: with thinking, the same answer took 1,116 tokens and 108 s instead of
+  101 tokens and 10 s.
+- **Trade-off:** slower per user than Gemma 4 26B-A4B (4B active parameters,
+  ~23 tok/s), which stays in the catalog as an alternative.
+
 ## Open questions
 
-- **NATS.** RAGFlow 0.27.2 logs `ingestor: mq_type nats`, but its compose does
-  not start NATS in the Python deployment; task queues appear in Valkey.
-  Verify with a real document ingestion in stage 3.
+- **Scanned documents.** See D14.
+- **Glued lines.** When RAGFlow merges lines of a DOCX into a chunk it adds no
+  separator (`GPUКритерий`, `скоростьsudo` — 11 places in a short document),
+  which hurts keyword search.
+- **Time zone.** RAGFlow logs in UTC+8 by default; the installer should pass the
+  host time zone to the containers.
+- **Auto-question and keyword analysis.** Both use the LLM to improve matching
+  (questions generated per chunk at indexing; keywords extracted per query).
+  Measure the gain against the extra time.
+- **Upstream reports.** Two RAGFlow defects found in stage 3 (D3 patch 2, D14)
+  should be reported to the `0.27.x` branch.
 - **Superuser e-mail.** Whether `admin@ragflow.io` can be changed through
   configuration is unverified.
 - **Sign-up on the server side.** The UI hides sign-up; whether the API rejects
   registration requests is unverified.
+- **ODBC driver licence.** The upstream Dockerfile installs Microsoft's ODBC
+  driver and accepts its EULA. Review its redistribution terms for the
+  published image, or drop the driver if SQL Server connectors are not needed.
 
 ---
 

@@ -34,21 +34,30 @@ citations — with every model running locally and no data leaving the machine.
 
 | Component | Version | Notes |
 |---|---|---|
-| RAGFlow | 0.27.2 | built for arm64 by this project — no official arm64 images exist ([how](docs/BUILD.md)) |
+| RAGFlow | 0.27.2 | built for arm64 by this project, with two documented fixes — no official arm64 images exist ([how](docs/BUILD.md)) |
 | Elasticsearch | 8.11.3 | the version RAGFlow pins |
 | MySQL | 8.0 | RAGFlow metadata |
 | Valkey | 8 | RAGFlow task queue |
 | Object storage (pgsty/silo) | pinned by RAGFlow | maintained MinIO fork; official MinIO images were withdrawn |
 | vLLM | pinned per model | official images from Docker Hub, pinned by digest |
 
-Default models: Gemma 4 26B-A4B (LLM), deepvk/USER-bge-m3 (embeddings),
-BAAI/bge-reranker-v2-m3 (reranker). See [catalog/models.yaml](catalog/models.yaml).
+Default models: Qwen 3.8 27B NVFP4 with multi-token prediction (LLM),
+deepvk/USER-bge-m3 (embeddings), BAAI/bge-reranker-v2-m3 (reranker); all three
+on the official vLLM 0.27.1 image. Gemma 4 26B-A4B is the faster alternative.
+See [catalog/models.yaml](catalog/models.yaml).
+
+**Russian documents:** RAGFlow's defaults do not work well for Russian, and
+RAGSpark changes them — PDFs are read from their text layer, and retrieval
+relies on the reranker. The measurements are in
+[docs/VALIDATION.md](docs/VALIDATION.md). Scanned PDFs are not supported yet.
 
 ## Roadmap
 
 - [x] **Stage 1** — decisions and compatibility review ([docs/DECISIONS.md](docs/DECISIONS.md))
-- [ ] **Stage 2** — RAGFlow 0.27.2 arm64 image ([docs/BUILD.md](docs/BUILD.md))
+- [x] **Stage 2** — RAGFlow 0.27.2 arm64 image ([docs/BUILD.md](docs/BUILD.md))
 - [ ] **Stage 3** — `single` mode: install, automatic model setup, built-in acceptance test
+  - [x] 3.1 — end-to-end validation on a test stack ([docs/VALIDATION.md](docs/VALIDATION.md), [tools](docs/TOOLS.md))
+  - [ ] 3.2 — RAGSpark compose; 3.3 — installer; 3.4 — clean install
 - [ ] **Stage 4** — model catalog beyond the defaults
 - [ ] **Stage 5** — `stack` mode on two DGX Spark units
 - [ ] **Stage 6** — backups, optional monitoring, offline bundle
