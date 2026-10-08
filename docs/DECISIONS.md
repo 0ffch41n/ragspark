@@ -48,7 +48,7 @@ re-check them before any version bump.
   publish to GHCR as `ghcr.io/0ffch41n/ragspark-ragflow`, reference by digest.
   Recipe: [BUILD.md](BUILD.md).
 - **Published:** `0.27.2-arm64-r2` (2026-10-08),
-  `sha256:1c8e60a0841b333c700488cb029d3664807249da0c071e862191b00fe34b228c`, with both patches below.
+  `sha256:4232ddbb513cff48c51864f081f6b82d37371927dea70bb01a200c6994f70dcc`, with both patches below.
   It replaces `0.27.2-arm64-r1` (2026-10-01,
   `sha256:1bf5fc0031bff2d775dc8bc1626b2820f9b658b43696a9bb4bdc02a8304f0660`),
   which had patch 1 only.

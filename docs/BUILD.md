@@ -10,13 +10,13 @@ upstream.
 
 | Tag | Digest | Patches | Status |
 |---|---|---|---|
-| `0.27.2-arm64-r2` | `sha256:1c8e60a0841b333c700488cb029d3664807249da0c071e862191b00fe34b228c` | Chrome + reranker input | current |
+| `0.27.2-arm64-r2` | `sha256:4232ddbb513cff48c51864f081f6b82d37371927dea70bb01a200c6994f70dcc` | Chrome + reranker input | current |
 | `0.27.2-arm64-r1` | `sha256:1bf5fc0031bff2d775dc8bc1626b2820f9b658b43696a9bb4bdc02a8304f0660` | Chrome | superseded |
 
 Current image:
 
 ```bash
-docker pull ghcr.io/0ffch41n/ragspark-ragflow:0.27.2-arm64-r2@sha256:1c8e60a0841b333c700488cb029d3664807249da0c071e862191b00fe34b228c
+docker pull ghcr.io/0ffch41n/ragspark-ragflow:0.27.2-arm64-r2@sha256:4232ddbb513cff48c51864f081f6b82d37371927dea70bb01a200c6994f70dcc
 ```
 
 `r2` was verified on 2026-10-08 on a DGX Spark: the patch marker is present in

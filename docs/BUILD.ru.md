@@ -10,13 +10,13 @@ arm64 из исходников. Здесь описано, как это дел
 
 | Тег | Хеш | Правки | Статус |
 |---|---|---|---|
-| `0.27.2-arm64-r2` | `sha256:1c8e60a0841b333c700488cb029d3664807249da0c071e862191b00fe34b228c` | Chrome + текст для реранкера | текущий |
+| `0.27.2-arm64-r2` | `sha256:4232ddbb513cff48c51864f081f6b82d37371927dea70bb01a200c6994f70dcc` | Chrome + текст для реранкера | текущий |
 | `0.27.2-arm64-r1` | `sha256:1bf5fc0031bff2d775dc8bc1626b2820f9b658b43696a9bb4bdc02a8304f0660` | Chrome | заменён |
 
 Текущий образ:
 
 ```bash
-docker pull ghcr.io/0ffch41n/ragspark-ragflow:0.27.2-arm64-r2@sha256:1c8e60a0841b333c700488cb029d3664807249da0c071e862191b00fe34b228c
+docker pull ghcr.io/0ffch41n/ragspark-ragflow:0.27.2-arm64-r2@sha256:4232ddbb513cff48c51864f081f6b82d37371927dea70bb01a200c6994f70dcc
 ```
 
 `r2` проверен 8 октября 2026 года на DGX Spark: метка правки есть в
