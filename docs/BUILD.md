@@ -10,14 +10,24 @@ upstream.
 
 | Tag | Digest | Patches | Status |
 |---|---|---|---|
-| `0.27.2-arm64-r2` | published after the build | Chrome + reranker input | current |
+| `0.27.2-arm64-r2` | `sha256:1c8e60a0841b333c700488cb029d3664807249da0c071e862191b00fe34b228c` | Chrome + reranker input | current |
 | `0.27.2-arm64-r1` | `sha256:1bf5fc0031bff2d775dc8bc1626b2820f9b658b43696a9bb4bdc02a8304f0660` | Chrome | superseded |
 
-`r1`:
+Current image:
 
 ```bash
-docker pull ghcr.io/0ffch41n/ragspark-ragflow:0.27.2-arm64-r1@sha256:1bf5fc0031bff2d775dc8bc1626b2820f9b658b43696a9bb4bdc02a8304f0660
+docker pull ghcr.io/0ffch41n/ragspark-ragflow:0.27.2-arm64-r2@sha256:1c8e60a0841b333c700488cb029d3664807249da0c071e862191b00fe34b228c
 ```
+
+`r2` was verified on 2026-10-08 on a DGX Spark: the patch marker is present in
+`/ragflow/rag/nlp/search.py`, the model check passed on the test stack, and the
+retrieval matrix matched the hot-patched results
+([VALIDATION.md](VALIDATION.md), §4). Build inputs:
+
+- `ubuntu:24.04@sha256:534baea6a22c03a63003dbc8dbe78fe34bc0d7e595d9a9dc9834884ff530eb55`
+- `infiniflow/ragflow_deps:latest@sha256:e69762c256ea2338a786a9b2f003da8e91e5e69b26bb6797c2206276ce32e5ff` — upstream refers to this image by a
+  floating tag, so a later rebuild may take different data files (see the open
+  questions in [DECISIONS.md](DECISIONS.md)).
 
 `r1` was verified on 2026-10-01 on a DGX Spark: `/ragflow/VERSION` reports `v0.27.2`,
 `/opt/chrome` is absent, and with RAGFlow's own compose the web UI answers

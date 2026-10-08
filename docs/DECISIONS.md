@@ -47,9 +47,11 @@ re-check them before any version bump.
   emulation), slim edition (no bundled embedding models — vLLM provides them),
   publish to GHCR as `ghcr.io/0ffch41n/ragspark-ragflow`, reference by digest.
   Recipe: [BUILD.md](BUILD.md).
-- **Published:** `0.27.2-arm64-r1` (2026-10-01),
-  `sha256:1bf5fc0031bff2d775dc8bc1626b2820f9b658b43696a9bb4bdc02a8304f0660` —
-  superseded by `r2` (patch 2 below), published after it is built.
+- **Published:** `0.27.2-arm64-r2` (2026-10-08),
+  `sha256:1c8e60a0841b333c700488cb029d3664807249da0c071e862191b00fe34b228c`, with both patches below.
+  It replaces `0.27.2-arm64-r1` (2026-10-01,
+  `sha256:1bf5fc0031bff2d775dc8bc1626b2820f9b658b43696a9bb4bdc02a8304f0660`),
+  which had patch 1 only.
 - **Deviations from upstream** — two, each applied by a script that refuses to
   run if the code it expects is not there:
   1. The Chrome/ChromeDriver steps run on x86_64 only: the archives in
@@ -280,6 +282,10 @@ re-check them before any version bump.
 - **ODBC driver licence.** The upstream Dockerfile installs Microsoft's ODBC
   driver and accepts its EULA. Review its redistribution terms for the
   published image, or drop the driver if SQL Server connectors are not needed.
+- **Dependency image.** The upstream Dockerfile copies data files (OCR models,
+  NLTK data, Tika, uv) from `infiniflow/ragflow_deps:latest`, a floating tag.
+  Pin it by digest in the build so that a rebuild reproduces the published
+  image; the digest used for `r2` is in [BUILD.md](BUILD.md).
 
 ---
 

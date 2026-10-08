@@ -120,7 +120,8 @@ similarity threshold; `w` is the vector similarity weight.
   LLM is not affected: it receives the original chunk text.
 - Fix: [patch_search.py](../build/ragflow/patch_search.py) (image `r2`) — the
   reranker gets the original chunk text plus the chunk's keywords and
-  generated questions. Tested hot-patched in the running container.
+  generated questions. Tested hot-patched in the running container, then
+  again with the image `r2` on 2026-10-08: the same matrix.
 
 ## 5. End to end
 

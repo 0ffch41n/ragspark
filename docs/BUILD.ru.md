@@ -10,14 +10,24 @@ arm64 из исходников. Здесь описано, как это дел
 
 | Тег | Хеш | Правки | Статус |
 |---|---|---|---|
-| `0.27.2-arm64-r2` | публикуется после сборки | Chrome + текст для реранкера | текущий |
+| `0.27.2-arm64-r2` | `sha256:1c8e60a0841b333c700488cb029d3664807249da0c071e862191b00fe34b228c` | Chrome + текст для реранкера | текущий |
 | `0.27.2-arm64-r1` | `sha256:1bf5fc0031bff2d775dc8bc1626b2820f9b658b43696a9bb4bdc02a8304f0660` | Chrome | заменён |
 
-`r1`:
+Текущий образ:
 
 ```bash
-docker pull ghcr.io/0ffch41n/ragspark-ragflow:0.27.2-arm64-r1@sha256:1bf5fc0031bff2d775dc8bc1626b2820f9b658b43696a9bb4bdc02a8304f0660
+docker pull ghcr.io/0ffch41n/ragspark-ragflow:0.27.2-arm64-r2@sha256:1c8e60a0841b333c700488cb029d3664807249da0c071e862191b00fe34b228c
 ```
+
+`r2` проверен 8 октября 2026 года на DGX Spark: метка правки есть в
+`/ragflow/rag/nlp/search.py`, проверка моделей на тестовом стенде прошла, а
+таблица поиска совпала с результатами ручной правки
+([VALIDATION.ru.md](VALIDATION.ru.md), §4). Исходные образы сборки:
+
+- `ubuntu:24.04@sha256:534baea6a22c03a63003dbc8dbe78fe34bc0d7e595d9a9dc9834884ff530eb55`
+- `infiniflow/ragflow_deps:latest@sha256:e69762c256ea2338a786a9b2f003da8e91e5e69b26bb6797c2206276ce32e5ff` — официальный Dockerfile ссылается
+  на этот образ по плавающему тегу, поэтому повторная сборка может взять другие
+  файлы данных (см. открытые вопросы в [DECISIONS.ru.md](DECISIONS.ru.md)).
 
 `r1` проверен 1 октября 2026 года на DGX Spark: `/ragflow/VERSION` показывает
 `v0.27.2`, каталога `/opt/chrome` нет, а с собственным compose RAGFlow
