@@ -1,4 +1,9 @@
-# RAGSpark model catalog - DRAFT, schema v0
+# RAGSpark model catalog - DRAFT, schema 1
+#
+# Runnable entries point to a compose file (`compose:`). That file is the
+# source of truth for the image, its digest and the vLLM flags; the catalog
+# keeps what the wizard shows and what was measured. Candidates without a
+# compose file record what is known so far.
 #
 # Field meanings:
 #   serving_verified  vLLM served this model on real DGX Spark hardware with
@@ -10,7 +15,7 @@
 #
 # Every image is pinned by digest. Never use floating tags in a release.
 
-schema: 0
+schema: 1
 
 hardware:
   dgx-spark:
@@ -20,20 +25,9 @@ hardware:
     usable_memory_gib: 121      # unified CPU+GPU memory as reported by the OS
     driver_branch: "580"        # newer branches regress on GB10
 
-images:
-  vllm-0271-aarch64:
-    ref: vllm/vllm-openai:v0.27.1-aarch64
-    digest: sha256:1c8e60a0841b333c700488cb029d3664807249da0c071e862191b00fe34b228c
-    pulled: "2026-10-01"
-    note: >-
-      official vLLM 0.27.1 image, CUDA 13.0; reports compute capability (12, 1)
-      on GB10 and selects FlashInferCutlassNvFp4LinearKernel for NVFP4.
-      Serves the default LLM, embedding and rerank models.
-  vllm-gemma4-cu130:
-    ref: vllm/vllm-openai:gemma4-cu130
-    digest: sha256:0d152595cd940ea1e0890fa190a37b7a86e3f7f0f5048ac3e2e4c14529fea833
-    pulled: "2026-09-28"
-    note: official vLLM image built for Gemma 4 (vLLM 0.19)
+# Images used by compose/: vllm/vllm-openai:v0.27.1-aarch64 (vLLM 0.27.1,
+# CUDA 13.0; reports compute capability (12, 1) on GB10 and selects
+# FlashInferCutlassNvFp4LinearKernel for NVFP4). Digests are in compose/.
 
 models:
   llm:
@@ -41,13 +35,14 @@ models:
       hf_repo: google/gemma-4-26B-A4B-it
       served_name: google/gemma-4-26B-A4B-it
       modes: [single]
-      image: vllm-gemma4-cu130
+      compose: null                     # stage 4: compose/llm/gemma-4-26b-a4b.yaml
+      image: vllm/vllm-openai:gemma4-cu130@sha256:0d152595cd940ea1e0890fa190a37b7a86e3f7f0f5048ac3e2e4c14529fea833
       gpu_memory_utilization: 0.60      # ~84 GB: ~50 GB weights + KV cache
       context:
         default: 65536
       vllm_args: [--kv-cache-dtype, fp8, --enable-prefix-caching, --enforce-eager]
       tool_calling: false               # no tool-call parser configured
-      serving_verified: "2026-09-30 DGX OS 7.5.0, driver 580.178.04, CUDA 13.0"
+      serving_verified: "2026-09-30 DGX OS 7.5.0, driver 580.178.04, CUDA 13.0 (image built for Gemma 4, vLLM 0.19)"
       measured:
         decode_tok_s_single: 23
       validated: false
@@ -58,34 +53,18 @@ models:
       hf_repo: Inferact/Qwen3.8-27B-NVFP4   # higher MTP acceptance than unsloth (0.897 vs 0.788)
       served_name: qwen3.8-27b
       modes: [single]
-      image: vllm-0271-aarch64
-      gpu_memory_utilization: 0.50
+      compose: compose/llm/qwen-3.8-27b-nvfp4.yaml   # image, flags: MTP 3, thinking off, fp8 KV cache
+      memory_share: 0.50                # of unified memory; weights ~18 GB, the rest KV cache
       context:
         default: 65536
-      vllm_args:
-        - --max-num-batched-tokens
-        - "8192"                        # MTP otherwise caps the batch at 2048 tokens
-        - --kv-cache-dtype
-        - fp8
-        - --reasoning-parser
-        - qwen3
-        - --enable-auto-tool-choice
-        - --tool-call-parser
-        - qwen3_xml
-        - --speculative-config
-        - '{"method":"mtp","num_speculative_tokens":3}'
-        - --default-chat-template-kwargs
-        - '{"enable_thinking": false}'  # RAGFlow does not send it; thinking costs ~10x time
-        - --override-generation-config
-        - '{"temperature": 0.7, "top_p": 0.8, "top_k": 20}'
       tool_calling: true
       serving_verified: "2026-10-02 DGX OS 7.5.0, driver 580.178.04, CUDA 13.0"
       measured:
         decode_tok_s_single: 17.1       # MTP 3; 10.2 without MTP; 19-21 on answers from context
         concurrency_8: "all OK, ~90 tok/s aggregate"
-        startup_min: 7                  # weights cached; MTP + CUDA graph capture
+        startup_min: 7                  # weights cached; MTP + CUDA graph capture; 5.5 with the compile cache
         language_mixing: "0 of 30 probe answers; 1 CJK fragment seen in an earlier ad-hoc answer"
-      validated: false                  # answered RAG questions correctly in RAGFlow chat (2026-10-07); formal test pending
+      validated: false                  # answered RAG questions correctly (2026-10-07); same speed under compose (2026-10-08); formal test pending
       license: "Apache-2.0 (base model Qwen/Qwen3.8-27B); confirm on the checkpoint card"
       note: >-
         min_p and logit_bias are ignored with speculative decoding.
@@ -118,24 +97,22 @@ models:
   embedding:
     - id: user-bge-m3
       hf_repo: deepvk/USER-bge-m3
-      image: vllm-0271-aarch64
-      entrypoint: [/usr/bin/env]        # image entrypoint is `vllm serve`
-      vllm_args: [--runner, pooling, --gpu-memory-utilization, "0.05", --trust-remote-code]
+      compose: compose/compose.yaml     # service vllm-embed
+      memory_share: 0.05
       context: 8192
       memory_gb: 2
-      serving_verified: "2026-10-07 on vllm-0271-aarch64 (also 2026-09-30 on vllm-gemma4-cu130)"
+      serving_verified: "2026-10-07 on vllm/vllm-openai:v0.27.1-aarch64 (also 2026-09-30 on :gemma4-cu130)"
       validated: false
       license: TBD
 
   rerank:
     - id: bge-reranker-v2-m3
       hf_repo: BAAI/bge-reranker-v2-m3
-      image: vllm-0271-aarch64
-      entrypoint: [/usr/bin/env]
-      vllm_args: [--runner, pooling, --gpu-memory-utilization, "0.03", --trust-remote-code]
+      compose: compose/compose.yaml     # service vllm-rerank
+      memory_share: 0.03
       context: 8192
       memory_gb: 2
-      serving_verified: "2026-10-07 on vllm-0271-aarch64 (also 2026-09-30 on vllm-gemma4-cu130)"
+      serving_verified: "2026-10-07 on vllm/vllm-openai:v0.27.1-aarch64 (also 2026-09-30 on :gemma4-cu130)"
       validated: false
       license: TBD
       note: >-

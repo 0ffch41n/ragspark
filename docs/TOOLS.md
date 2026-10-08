@@ -2,16 +2,13 @@
 
 [Русская версия](TOOLS.ru.md)
 
-Three standalone Python scripts used to validate a RAGSpark stack. They need
-no packages beyond the Python standard library, and two of them run *inside*
-the RAGFlow container so they can use RAGFlow's own password encryption.
+Standalone Python scripts for setting up and checking a RAGSpark stack. They
+need nothing beyond the Python standard library. Three of them run *inside*
+the RAGFlow container: it can reach the vLLM services by name, has RAGFlow's
+own password encryption, and already holds the superuser credentials and the
+LLM settings in its environment (`compose/.env` and the LLM file).
 
-In the commands below, `<ragflow>` is the RAGFlow container name and `$PW` is
-the administrator password (`ADMIN_DEFAULT_PASSWORD` in the stack's `.env`):
-
-```bash
-PW=$(grep '^ADMIN_DEFAULT_PASSWORD=' /path/to/.env | cut -d= -f2)
-```
+Run the commands below from the `compose/` directory.
 
 ## ragflow_models.py — register models in RAGFlow
 
@@ -21,12 +18,16 @@ second run changes nothing.
 
 ```bash
 # read-only check
-sudo docker exec -i -e ADMIN_DEFAULT_PASSWORD="$PW" <ragflow> \
-  sh -c 'cd /ragflow && PYTHONPATH=/ragflow .venv/bin/python - --check' < tools/ragflow_models.py
+sudo docker compose exec -T ragflow \
+  sh -c 'cd /ragflow && PYTHONPATH=/ragflow .venv/bin/python - --check' < ../tools/ragflow_models.py
 # apply
-sudo docker exec -i -e ADMIN_DEFAULT_PASSWORD="$PW" <ragflow> \
-  sh -c 'cd /ragflow && PYTHONPATH=/ragflow .venv/bin/python -' < tools/ragflow_models.py
+sudo docker compose exec -T ragflow \
+  sh -c 'cd /ragflow && PYTHONPATH=/ragflow .venv/bin/python -' < ../tools/ragflow_models.py
 ```
+
+The LLM entry comes from `RAGSPARK_LLM_NAME`, `RAGSPARK_LLM_CONTEXT` and
+`RAGSPARK_LLM_TOOLS`, which the selected LLM file sets for the RAGFlow
+service; `--spec FILE` replaces the whole list.
 
 | Status | Meaning |
 |---|---|
@@ -49,8 +50,8 @@ it runs a question set through the retrieval API with five setups and checks
 whether a chunk containing the expected facts is found.
 
 ```bash
-sudo docker exec -i -e ADMIN_DEFAULT_PASSWORD="$PW" <ragflow> \
-  sh -c 'cd /ragflow && PYTHONPATH=/ragflow .venv/bin/python - --dataset test' < tools/rag_eval.py
+sudo docker compose exec -T ragflow \
+  sh -c 'cd /ragflow && PYTHONPATH=/ragflow .venv/bin/python - --dataset test' < ../tools/rag_eval.py
 ```
 
 | Option | Effect |
@@ -74,9 +75,22 @@ RAGSpark; for other documents pass `--questions`.
 
 Runs Russian prompts against the LLM in three modes (thinking on, thinking
 off, thinking off with temperature 0.7) and reports speed and how many
-answers contain CJK characters (language mixing). Runs on the host.
+answers contain CJK characters (language mixing).
 
 ```bash
-sudo python3 tools/model_probe.py              # finds the ragspark-vllm container
-VLLM_URL=http://host:8000 python3 tools/model_probe.py
+sudo docker compose exec -T ragflow /ragflow/.venv/bin/python - < ../tools/model_probe.py
+# any OpenAI-compatible server:
+VLLM_URL=http://host:8000 MODEL=<served name> python3 tools/model_probe.py
+```
+
+## pin_images.py — pin images by digest
+
+Runs on the host. For every `image:` line with a tag only, it writes the
+registry digest of the local image (`name:tag@sha256:…`); pinned lines are
+compared with the local image. Use it after changing a tag and pulling the
+new image.
+
+```bash
+sudo python3 tools/pin_images.py compose/compose.yaml compose/llm/*.yaml          # pin
+sudo python3 tools/pin_images.py --check compose/compose.yaml compose/llm/*.yaml  # report only
 ```

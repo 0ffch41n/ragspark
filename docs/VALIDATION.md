@@ -1,11 +1,12 @@
-# Stage 3.1 validation log
+# Validation log
 
 [Русская версия](VALIDATION.ru.md)
 
-Evidence behind decisions D8 and D14–D16 in [DECISIONS.md](DECISIONS.md),
-collected 2026-10-02 … 2026-10-07 on one DGX Spark (GB10, DGX OS 7.5.0,
-driver 580.178.04, CUDA 13.0) with RAGFlow's own compose, the RAGSpark image
-`0.27.2-arm64-r1` and three vLLM containers on the same Docker network.
+Sections 1–5 are stage 3.1: evidence behind decisions D8 and D14–D16 in
+[DECISIONS.md](DECISIONS.md), collected 2026-10-02 … 2026-10-07 on one DGX
+Spark (GB10, DGX OS 7.5.0, driver 580.178.04, CUDA 13.0) with RAGFlow's own
+compose, the RAGSpark image `0.27.2-arm64-r1` and three vLLM containers on the
+same Docker network. Section 6 is stage 3.2, RAGSpark's own compose (D17).
 Numbers can be reproduced with the scripts in [tools/](../tools/).
 
 ## 1. LLM serving — Qwen 3.8 27B NVFP4
@@ -133,3 +134,47 @@ similarity threshold; `w` is the vector similarity weight.
   passes the threshold, so the model has no chance to invent an answer.
 - New datasets and chats picked up the default LLM and embedding model; the
   reranker had to be selected manually (D8).
+
+## 6. RAGSpark compose (stage 3.2)
+
+Evidence for D17, collected 2026-10-08 on the same DGX Spark with Docker
+29.6.2 and Compose v5.2.0: [compose/](../compose/) started from empty volumes,
+with the weights already in `/srv/ragspark/hf-cache`.
+
+- **Start order and time** (`docker compose up -d --wait`, start times from
+  `docker inspect`):
+
+  | Step | Time |
+  |---|---|
+  | `vllm-embed` until healthy | 36 s |
+  | `vllm-rerank` until healthy | 36 s |
+  | `vllm-llm` (Qwen 3.8, MTP) until healthy | 7 min 11 s |
+  | `ragflow` until healthy | ~46 s |
+  | **whole stack** | **9 min 10 s** |
+
+  The databases became healthy in parallel with the models. Health checks run
+  every 20 s, so each step is accurate to about 20 s.
+- **LLM restart** (`docker compose restart vllm-llm`): 332 s instead of 431 s.
+  The compile cache kept in the `vllm-compile-cache` volume saves about a
+  quarter; loading the weights and capturing CUDA graphs are repeated.
+- **Exposure:** the only listening `docker-proxy` is `0.0.0.0:80`.
+- **Time zone:** the RAGFlow container shows the host's time (MSK).
+- **Health:** `/api/v1/system/healthz` returned `ok` for MySQL,
+  Elasticsearch, Valkey and storage.
+- **Memory with the stack idle:** 86 GiB used, 35 GiB file cache, 34 GiB
+  available. The models started without freeing the file cache first.
+- **Superuser:** RAGFlow created `admin@ragspark.local` from
+  `DEFAULT_SUPERUSER_EMAIL`; the API and the web interface accept it.
+- **Models:** on the empty database [ragflow_models.py](../tools/ragflow_models.py)
+  added the VLLM provider, created the three instances and set the defaults; a
+  second run reported everything `[OK]`. A new dataset picked up the default
+  embedding and indexing models.
+- **Retrieval:** the same two documents, re-uploaded (PDF with the Plain Text
+  parser), gave exactly the stage 3.1 results — PDF 41 chunks, Cyrillic share
+  0.835, no garbled words; the [rag_eval.py](../tools/rag_eval.py) matrix
+  identical cell by cell, **8/8 found · 2/2 rejected** with the RAGSpark
+  settings (reranker, 0.7 / 0.1).
+- **LLM from inside the stack** ([model_probe.py](../tools/model_probe.py)
+  run in the RAGFlow container): 16.5–17.0 tok/s, no CJK in 15 answers. The
+  "thinking" mode is as fast as the others because the server turns thinking
+  off unless a request asks for it.

@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """rag_eval.py - measure RAGFlow parsing and retrieval quality (read-only).
 
-Runs INSIDE the RAGFlow container (same way as ragflow_models.py):
+Runs INSIDE the RAGFlow container (same way as ragflow_models.py), from compose/:
 
-  docker exec -i -e ADMIN_DEFAULT_PASSWORD="$PW" <ragflow> \
-    sh -c 'cd /ragflow && PYTHONPATH=/ragflow .venv/bin/python - --dataset test' < rag_eval.py
+  sudo docker compose exec -T ragflow \
+    sh -c 'cd /ragflow && PYTHONPATH=/ragflow .venv/bin/python - --dataset test' < ../tools/rag_eval.py
 
 Reports, per document: chunk count, share of Cyrillic letters, number of
 garbled-looking words (Latin look-alikes such as "Pa3beM" produced by OCR
@@ -18,7 +18,7 @@ import argparse, base64, http.cookiejar, json, os, re, sys, urllib.error, urllib
 
 API = os.environ.get("RAGFLOW_API", "http://127.0.0.1:9380").rstrip("/")
 RERANK = "BAAI/bge-reranker-v2-m3@ragspark-rerank@VLLM"
-RERANK_URL = os.environ.get("RERANK_URL", "http://ragspark-vllm-rerank:8000/v1/rerank")
+RERANK_URL = os.environ.get("RERANK_URL", "http://vllm-rerank:8000/v1/rerank")
 RERANK_MODEL = "BAAI/bge-reranker-v2-m3"
 
 # Questions for the MSI MPG B550 Gaming Plus manual (Russian, 39 pages).
@@ -99,6 +99,12 @@ def ok(code, d):
 def err(code, d):
     return "HTTP %s code=%s %s" % (code, d.get("code") if isinstance(d, dict) else "?",
                                    str(d.get("message") if isinstance(d, dict) else d)[:200])
+
+
+def admin_email():
+    """The superuser RAGFlow created on first start (compose/.env)."""
+    return (os.environ.get("RAGFLOW_ADMIN_EMAIL") or os.environ.get("DEFAULT_SUPERUSER_EMAIL")
+            or "admin@ragflow.io")
 
 
 def login(email, password):
@@ -264,10 +270,10 @@ def main():
     a = ap.parse_args()
     questions = json.load(open(a.questions)) if a.questions else QUESTIONS
 
-    password = os.environ.get("ADMIN_DEFAULT_PASSWORD")
+    password = os.environ.get("ADMIN_DEFAULT_PASSWORD") or os.environ.get("DEFAULT_SUPERUSER_PASSWORD")
     if not password:
         sys.exit("[FAIL] ADMIN_DEFAULT_PASSWORD is not set")
-    login(os.environ.get("RAGFLOW_ADMIN_EMAIL", "admin@ragflow.io"), password)
+    login(admin_email(), password)
     ds = find_dataset(a.dataset)
 
     print("== documents in %r" % a.dataset)

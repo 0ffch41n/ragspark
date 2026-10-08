@@ -57,7 +57,8 @@ relies on the reranker. The measurements are in
 - [x] **Stage 2** — RAGFlow 0.27.2 arm64 image ([docs/BUILD.md](docs/BUILD.md))
 - [ ] **Stage 3** — `single` mode: install, automatic model setup, built-in acceptance test
   - [x] 3.1 — end-to-end validation on a test stack ([docs/VALIDATION.md](docs/VALIDATION.md), [tools](docs/TOOLS.md))
-  - [ ] 3.2 — RAGSpark compose; 3.3 — installer; 3.4 — clean install
+  - [x] 3.2 — RAGSpark compose ([docs/COMPOSE.md](docs/COMPOSE.md))
+  - [ ] 3.3 — installer; 3.4 — clean install
 - [ ] **Stage 4** — model catalog beyond the defaults
 - [ ] **Stage 5** — `stack` mode on two DGX Spark units
 - [ ] **Stage 6** — backups, optional monitoring, offline bundle

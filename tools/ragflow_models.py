@@ -2,28 +2,32 @@
 """ragflow_models.py - register RAGSpark's vLLM models in RAGFlow 0.27 (idempotent).
 
 Runs INSIDE the RAGFlow container, so it uses RAGFlow's own password
-encryption and needs nothing on the host:
+encryption and needs nothing on the host. From the compose/ directory:
 
-  docker exec -i -e ADMIN_DEFAULT_PASSWORD="$PW" <ragflow> \
-    sh -c 'cd /ragflow && PYTHONPATH=/ragflow .venv/bin/python - --check' < ragflow_models.py
+  sudo docker compose exec -T ragflow \
+    sh -c 'cd /ragflow && PYTHONPATH=/ragflow .venv/bin/python - --check' < ../tools/ragflow_models.py
 
   --check        read-only: verify connectivity, report what would change
   (no flag)      create missing instances, set default models
 
 Existing instances are never modified; a mismatch is reported instead.
-The admin password comes from ADMIN_DEFAULT_PASSWORD in the container
-environment (RAGFlow creates admin@ragflow.io with it on first start).
+Everything comes from the container environment (compose/.env and the LLM
+file): the superuser DEFAULT_SUPERUSER_EMAIL / ADMIN_DEFAULT_PASSWORD, and
+the LLM RAGSPARK_LLM_NAME, RAGSPARK_LLM_CONTEXT, RAGSPARK_LLM_TOOLS.
 Request formats were captured from RAGFlow 0.27.2.
 """
 import argparse, base64, http.cookiejar, json, os, sys, urllib.error, urllib.parse, urllib.request
 
 PROVIDER = "VLLM"
+# Host names are the compose service names (compose/compose.yaml).
 DEFAULT_SPEC = [
-    {"instance": "ragspark-llm", "base_url": "http://ragspark-vllm:8000/v1",
-     "model": "qwen3.8-27b", "type": "chat", "max_tokens": 65536, "is_tools": True},
-    {"instance": "ragspark-embed", "base_url": "http://ragspark-vllm-embed:8000/v1",
+    {"instance": "ragspark-llm", "base_url": "http://vllm-llm:8000/v1",
+     "model": os.environ.get("RAGSPARK_LLM_NAME", "qwen3.8-27b"), "type": "chat",
+     "max_tokens": int(os.environ.get("RAGSPARK_LLM_CONTEXT", "65536")),
+     "is_tools": os.environ.get("RAGSPARK_LLM_TOOLS", "1") == "1"},
+    {"instance": "ragspark-embed", "base_url": "http://vllm-embed:8000/v1",
      "model": "deepvk/USER-bge-m3", "type": "embedding", "max_tokens": 8192, "is_tools": False},
-    {"instance": "ragspark-rerank", "base_url": "http://ragspark-vllm-rerank:8000/v1",
+    {"instance": "ragspark-rerank", "base_url": "http://vllm-rerank:8000/v1",
      "model": "BAAI/bge-reranker-v2-m3", "type": "rerank", "max_tokens": 8192, "is_tools": False},
 ]
 
@@ -87,6 +91,12 @@ def items(d):
     return []
 
 
+def admin_email():
+    """The superuser RAGFlow created on first start (compose/.env)."""
+    return (os.environ.get("RAGFLOW_ADMIN_EMAIL") or os.environ.get("DEFAULT_SUPERUSER_EMAIL")
+            or "admin@ragflow.io")
+
+
 def login(email, password):
     code, d, headers = call("POST", "/api/v1/auth/login",
                             {"email": email, "password": encrypt_password(password)})
@@ -125,7 +135,7 @@ def main():
     password = os.environ.get("ADMIN_DEFAULT_PASSWORD") or os.environ.get("DEFAULT_SUPERUSER_PASSWORD")
     if not password:
         sys.exit("[FAIL] ADMIN_DEFAULT_PASSWORD is not set in this environment")
-    login(os.environ.get("RAGFLOW_ADMIN_EMAIL", "admin@ragflow.io"), password)
+    login(admin_email(), password)
 
     existing = list_instances()
     if not existing:

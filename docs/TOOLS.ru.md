@@ -2,16 +2,13 @@
 
 [English version](TOOLS.md)
 
-Три самостоятельных скрипта на Python для проверки стека RAGSpark. Им не нужно
-ничего, кроме стандартной библиотеки Python, а два из них запускаются *внутри*
-контейнера RAGFlow, чтобы пользоваться его собственным шифрованием пароля.
+Самостоятельные скрипты на Python для настройки и проверки стека RAGSpark. Им
+не нужно ничего, кроме стандартной библиотеки Python. Три из них запускаются
+*внутри* контейнера RAGFlow: оттуда сервисы vLLM доступны по имени, есть
+собственное шифрование пароля RAGFlow, а данные суперпользователя и настройки
+LLM уже лежат в окружении контейнера (`compose/.env` и файл LLM).
 
-В командах ниже `<ragflow>` — имя контейнера RAGFlow, а `$PW` — пароль
-администратора (`ADMIN_DEFAULT_PASSWORD` в `.env` стека):
-
-```bash
-PW=$(grep '^ADMIN_DEFAULT_PASSWORD=' /path/to/.env | cut -d= -f2)
-```
+Команды ниже выполняются из каталога `compose/`.
 
 ## ragflow_models.py — регистрация моделей в RAGFlow
 
@@ -21,12 +18,16 @@ PW=$(grep '^ADMIN_DEFAULT_PASSWORD=' /path/to/.env | cut -d= -f2)
 
 ```bash
 # только проверка
-sudo docker exec -i -e ADMIN_DEFAULT_PASSWORD="$PW" <ragflow> \
-  sh -c 'cd /ragflow && PYTHONPATH=/ragflow .venv/bin/python - --check' < tools/ragflow_models.py
+sudo docker compose exec -T ragflow \
+  sh -c 'cd /ragflow && PYTHONPATH=/ragflow .venv/bin/python - --check' < ../tools/ragflow_models.py
 # применить
-sudo docker exec -i -e ADMIN_DEFAULT_PASSWORD="$PW" <ragflow> \
-  sh -c 'cd /ragflow && PYTHONPATH=/ragflow .venv/bin/python -' < tools/ragflow_models.py
+sudo docker compose exec -T ragflow \
+  sh -c 'cd /ragflow && PYTHONPATH=/ragflow .venv/bin/python -' < ../tools/ragflow_models.py
 ```
+
+Запись для LLM берётся из `RAGSPARK_LLM_NAME`, `RAGSPARK_LLM_CONTEXT` и
+`RAGSPARK_LLM_TOOLS`, которые выбранный файл LLM задаёт сервису RAGFlow;
+`--spec ФАЙЛ` заменяет весь список.
 
 | Статус | Значение |
 |---|---|
@@ -49,8 +50,8 @@ sudo docker exec -i -e ADMIN_DEFAULT_PASSWORD="$PW" <ragflow> \
 фрагмент с ожидаемыми фактами.
 
 ```bash
-sudo docker exec -i -e ADMIN_DEFAULT_PASSWORD="$PW" <ragflow> \
-  sh -c 'cd /ragflow && PYTHONPATH=/ragflow .venv/bin/python - --dataset test' < tools/rag_eval.py
+sudo docker compose exec -T ragflow \
+  sh -c 'cd /ragflow && PYTHONPATH=/ragflow .venv/bin/python - --dataset test' < ../tools/rag_eval.py
 ```
 
 | Ключ | Что делает |
@@ -74,9 +75,22 @@ MSI MPG B550 Gaming Plus (фрагмент на 39 страниц). Сама и�
 
 Задаёт LLM русские вопросы в трёх режимах — с рассуждениями, без них и без них
 с температурой 0,7 — и показывает скорость и сколько ответов содержат
-китайские, японские или корейские символы. Запускается на хосте.
+китайские, японские или корейские символы.
 
 ```bash
-sudo python3 tools/model_probe.py              # сам найдёт контейнер ragspark-vllm
-VLLM_URL=http://host:8000 python3 tools/model_probe.py
+sudo docker compose exec -T ragflow /ragflow/.venv/bin/python - < ../tools/model_probe.py
+# любой OpenAI-совместимый сервер:
+VLLM_URL=http://host:8000 MODEL=<имя модели> python3 tools/model_probe.py
+```
+
+## pin_images.py — закрепление образов хешем
+
+Запускается на хосте. Для каждой строки `image:`, где указан только тег,
+записывает хеш локального образа из реестра (`имя:тег@sha256:…`); уже
+закреплённые строки сверяет с локальным образом. Нужен после смены тега и
+скачивания нового образа.
+
+```bash
+sudo python3 tools/pin_images.py compose/compose.yaml compose/llm/*.yaml          # закрепить
+sudo python3 tools/pin_images.py --check compose/compose.yaml compose/llm/*.yaml  # только отчёт
 ```

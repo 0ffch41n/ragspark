@@ -132,9 +132,11 @@ re-check them before any version bump.
   request formats are captured from a live 0.27.2 install before automation is
   written.
 - **Administrator:** on first start the admin server creates the superuser
-  `admin@ragflow.io` with the password from `ADMIN_DEFAULT_PASSWORD`. The
-  installer sets a random value, so there is no race for the first sign-up.
-  Verified: the superuser signs in to the regular web UI.
+  with the address from `DEFAULT_SUPERUSER_EMAIL` (upstream default
+  `admin@ragflow.io`; RAGSpark uses `admin@ragspark.local`) and the password
+  from `ADMIN_DEFAULT_PASSWORD`. The installer sets a random value, so there is
+  no race for the first sign-up. Verified: the superuser signs in to the
+  regular web UI (2026-10-01), and the configured address works (2026-10-08).
 - **Users:** model instances belong to a tenant, so models are configured once
   in the administrator's tenant and other people are invited through **Team**.
   Open sign-up is disabled with `REGISTER_ENABLED=0` and `ENABLE_REGISTER=0`
@@ -153,8 +155,9 @@ re-check them before any version bump.
 ## D9. Model catalog
 
 - **What:** [catalog/models.yaml](../catalog/models.yaml) — one entry per model:
-  repository, image and digest, flags, memory, context presets, tool-calling
-  parser, supported modes, license, `validated` flag.
+  repository, memory share, context presets, tool calling, supported modes,
+  measurements, license, `validated` flag. A runnable entry points to its
+  compose file, which holds the image, its digest and the vLLM flags (D17).
 - **How:** the wizard offers only models that fit the detected hardware and mode
   and shows the expected context and speed. Model weights live in a host
   directory outside Docker volumes, so reinstalls do not re-download them.
@@ -250,7 +253,7 @@ re-check them before any version bump.
 - **Decision:** `Inferact/Qwen3.8-27B-NVFP4` on the official vLLM 0.27.1
   image, multi-token prediction with 3 speculative tokens, thinking disabled
   and sampling (temperature 0.7, top-p 0.8, top-k 20) set on the server. Flags
-  are in the [catalog](../catalog/models.yaml).
+  are in [compose/llm/qwen-3.8-27b-nvfp4.yaml](../compose/llm/qwen-3.8-27b-nvfp4.yaml).
 - **Why:** strong open model in its size class, Apache-2.0, native tool
   calling, decode speed nearly flat on long contexts. In Russian probes
   (30 answers) it never mixed in other scripts and cited sources correctly.
@@ -262,21 +265,74 @@ re-check them before any version bump.
 - **Trade-off:** slower per user than Gemma 4 26B-A4B (4B active parameters,
   ~23 tok/s), which stays in the catalog as an alternative.
 
+## D17. Runtime — RAGSpark's own compose
+
+- **What:** [compose/](../compose/) replaces RAGFlow's compose: one project,
+  `ragspark`, with RAGFlow (image `r2`), Elasticsearch, MySQL, object storage,
+  Valkey and three vLLM services. The LLM lives in its own file under
+  `compose/llm/`, selected with `COMPOSE_FILE` in `.env`. Guide:
+  [COMPOSE.md](COMPOSE.md).
+- **Why not RAGFlow's compose:** it publishes a port for every service
+  (Elasticsearch, MySQL, object storage, Valkey, the API, admin and MCP
+  servers), ships shared default passwords, fixes the time zone to
+  Asia/Shanghai and knows nothing about the models.
+- **How:**
+  - one published port — RAGFlow's nginx, 80 by default; everything else only
+    on the internal network (D12);
+  - start order through health checks: the vLLM services one at a time
+    (embeddings, reranker, LLM), the databases in parallel with them, RAGFlow
+    last. vLLM sizes its cache from the memory it measures while starting; on
+    unified memory, memory taken by another model starting in the same window
+    is counted against it, so concurrent starts can leave a model without room
+    for its cache;
+  - restart policy `on-failure`: a crashed container restarts, but Docker
+    starts nothing at boot, because it would start everything at once. The
+    installer adds a systemd unit that runs compose (3.3);
+  - random passwords per install (`init-env.sh`, `.env` with mode 600). The
+    session-signing key is set explicitly (`RAGFLOW_SECRET_KEY`); otherwise
+    RAGFlow generates one and keeps it in Valkey;
+  - the superuser's address is configurable: RAGFlow's admin server reads
+    `DEFAULT_SUPERUSER_EMAIL` when it creates the account
+    (`admin/server/auth.py`); RAGSpark uses `admin@ragspark.local`;
+  - host time zone for every container (`RAGSPARK_TZ`; variables that a shell
+    may also define carry the `RAGSPARK_` prefix, because compose prefers the
+    shell's value over `.env`);
+  - vLLM starts offline (`HF_HUB_OFFLINE=1`): weights come from the host cache
+    only, so a start does not depend on Hugging Face. Usage statistics are off
+    (`VLLM_NO_USAGE_STATS`, `DO_NOT_TRACK`);
+  - logs capped at 5 × 20 MB per container; every image pinned by digest
+    ([tools/pin_images.py](../tools/pin_images.py)).
+- **Differences from RAGFlow's compose** besides the above: the MySQL database
+  is created with `MYSQL_DATABASE` instead of a mounted `init.sql`;
+  `hostname: ragflow` keeps the task executor's id stable when the container is
+  re-created; health checks are stricter (Elasticsearch cluster at least
+  yellow; RAGFlow's `/api/v1/system/healthz` through nginx, which checks MySQL,
+  Valkey, Elasticsearch and storage); no profiles, Go server, NATS or TEI.
+- **Verified (2026-10-08):** from empty volumes the stack started in the
+  intended order in 9 min 10 s (LLM 7 min 11 s; 332 s on restart with the
+  compile cache); only port 80 listens; containers use the host time zone;
+  the configured superuser address works; models registered by the script on
+  the empty database; retrieval results identical to stage 3.1. The models
+  started without freeing the file cache. Details:
+  [VALIDATION.md](VALIDATION.md), section 6.
+
 ## Open questions
 
 - **Scanned documents.** See D14.
 - **Glued lines.** When RAGFlow merges lines of a DOCX into a chunk it adds no
   separator (`GPUКритерий`, `скоростьsudo` — 11 places in a short document),
   which hurts keyword search.
-- **Time zone.** RAGFlow logs in UTC+8 by default; the installer should pass the
-  host time zone to the containers.
 - **Auto-question and keyword analysis.** Both use the LLM to improve matching
   (questions generated per chunk at indexing; keywords extracted per query).
   Measure the gain against the extra time.
 - **Upstream reports.** Two RAGFlow defects found in stage 3 (D3 patch 2, D14)
   should be reported to the `0.27.x` branch.
-- **Superuser e-mail.** Whether `admin@ragflow.io` can be changed through
-  configuration is unverified.
+- **Start at boot.** A systemd unit that runs compose in order (3.3). The
+  stage 3.2 test needed no file-cache flush before the models started; check
+  again after a cold boot, when the cache is empty and nothing else runs.
+- **Model revisions.** Hugging Face repositories can change under the same
+  name. Pin a revision per catalog entry so that every install gets the
+  weights that were validated.
 - **Sign-up on the server side.** The UI hides sign-up; whether the API rejects
   registration requests is unverified.
 - **ODBC driver licence.** The upstream Dockerfile installs Microsoft's ODBC

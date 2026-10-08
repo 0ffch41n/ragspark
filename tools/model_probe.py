@@ -5,12 +5,15 @@ Runs the same Russian prompts in several modes and reports, per mode:
 speed (completion tokens / wall time), and how many answers contain
 CJK characters (language mixing).
 
-  sudo python3 model_probe.py                 # auto-detects ragspark-vllm IP
-  VLLM_URL=http://host:8000 python3 model_probe.py
-"""
-import json, os, re, subprocess, sys, time, urllib.request
+Runs inside the RAGFlow container, which can reach the vLLM service; from compose/:
 
-MODEL = os.environ.get("MODEL", "qwen3.8-27b")
+  sudo docker compose exec -T ragflow /ragflow/.venv/bin/python - < ../tools/model_probe.py
+
+Elsewhere: VLLM_URL=http://host:8000 MODEL=<served name> python3 model_probe.py
+"""
+import json, os, re, sys, time, urllib.request
+
+MODEL = os.environ.get("MODEL") or os.environ.get("RAGSPARK_LLM_NAME", "qwen3.8-27b")
 CJK = re.compile(r"[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uac00-\ud7af]")
 
 CONTEXT = (
@@ -39,17 +42,7 @@ MODES = {
 
 
 def base_url():
-    url = os.environ.get("VLLM_URL")
-    if url:
-        return url.rstrip("/")
-    try:
-        ip = subprocess.run(
-            ["docker", "inspect", "-f",
-             "{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}", "ragspark-vllm"],
-            capture_output=True, text=True, check=True).stdout.strip()
-    except Exception as e:
-        sys.exit("cannot find ragspark-vllm IP (%s); set VLLM_URL" % e)
-    return "http://%s:8000" % ip
+    return os.environ.get("VLLM_URL", "http://vllm-llm:8000").rstrip("/")
 
 
 def ask(url, prompt, params):
