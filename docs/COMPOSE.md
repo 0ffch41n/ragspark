@@ -3,8 +3,9 @@
 [Русская версия](COMPOSE.ru.md)
 
 The [compose/](../compose/) directory runs the whole `single` mode on one DGX
-Spark: RAGFlow, its databases and the three vLLM model servers. The installer
-(stage 3.3) will wrap the steps below; until then they are run by hand.
+Spark: RAGFlow, its databases and the three vLLM model servers. The
+[installer](INSTALL.md) performs the steps below and keeps its copy in
+`/opt/ragspark/compose`; this guide is for development and troubleshooting.
 Decision record: D17 in [DECISIONS.md](DECISIONS.md).
 
 ## Files
@@ -101,9 +102,11 @@ All from `compose/`:
 | restart one service | `sudo docker compose restart vllm-llm` |
 | shell in RAGFlow | `sudo docker compose exec ragflow bash` |
 
-Containers restart after a crash, but **nothing starts by itself when the
-Spark boots**: started by Docker itself, all containers would come up at
-once and break the start order. Run `up` after a reboot; the installer will add a systemd unit for it.
+Containers restart after a crash. At boot Docker itself starts only the
+containers whose last exit code was not 0, all at once and out of order. The
+installer's systemd unit stops those and starts the stack in order
+([INSTALL.md](INSTALL.md), *Start at boot*). Without it, run
+`sudo docker compose stop` and then `up` after a reboot.
 
 ## Changing the LLM
 

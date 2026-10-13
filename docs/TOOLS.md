@@ -3,12 +3,14 @@
 [Русская версия](TOOLS.ru.md)
 
 Standalone Python scripts for setting up and checking a RAGSpark stack. They
-need nothing beyond the Python standard library. Three of them run *inside*
+need nothing beyond the Python standard library. Four of them run *inside*
 the RAGFlow container: it can reach the vLLM services by name, has RAGFlow's
 own password encryption, and already holds the superuser credentials and the
 LLM settings in its environment (`compose/.env` and the LLM file).
 
-Run the commands below from the `compose/` directory.
+The installer runs `ragflow_models.py` and `acceptance.py` itself. Run the
+commands below from the `compose/` directory — `/opt/ragspark/compose` on an
+installed machine, where the tools are in `/opt/ragspark/tools`.
 
 ## ragflow_models.py — register models in RAGFlow
 
@@ -40,6 +42,30 @@ Existing instances are never modified. If an instance points to a different
 address, the script reports it and leaves it alone. A default that refers to a
 deleted model (it happens after an instance is deleted and re-created) is
 detected by model id and re-assigned.
+
+## acceptance.py — acceptance test
+
+Creates the knowledge base and the chat "RAGSpark — пример" ("RAGSpark
+sample" with `--lang en`) with RAGSpark's settings, uploads the sample PDF,
+waits for parsing and asks the chat the sample questions. Answers must contain
+the expected facts, cite the document and contain no CJK characters; a
+question the document does not answer must get the chat's "no answer" text.
+A knowledge base and chat with the same name are replaced; the new ones stay
+as an example. Details: [INSTALL.md](INSTALL.md), *Acceptance test*.
+
+```bash
+sudo ragspark acceptance              # on an installed machine
+# by hand:
+sudo docker compose cp ../acceptance/. ragflow:/tmp/ragspark-acceptance
+sudo docker compose exec -T ragflow \
+  sh -c 'cd /ragflow && PYTHONPATH=/ragflow .venv/bin/python - --lang ru' < ../tools/acceptance.py
+```
+
+| Option | Effect |
+|---|---|
+| `--lang ru\|en` | names, prompts and "no answer" text of the example |
+| `--dir DIR` | directory with the sample files inside the container (default `/tmp/ragspark-acceptance`) |
+| `--cleanup` | delete the knowledge base and chat after the test |
 
 ## rag_eval.py — parsing and retrieval quality
 

@@ -6,7 +6,8 @@ Sections 1–5 are stage 3.1: evidence behind decisions D8 and D14–D16 in
 [DECISIONS.md](DECISIONS.md), collected 2026-10-02 … 2026-10-07 on one DGX
 Spark (GB10, DGX OS 7.5.0, driver 580.178.04, CUDA 13.0) with RAGFlow's own
 compose, the RAGSpark image `0.27.2-arm64-r1` and three vLLM containers on the
-same Docker network. Section 6 is stage 3.2, RAGSpark's own compose (D17).
+same Docker network. Section 6 is stage 3.2, RAGSpark's own compose (D17);
+section 7 is stage 3.3, the installer (D18).
 Numbers can be reproduced with the scripts in [tools/](../tools/).
 
 ## 1. LLM serving — Qwen 3.8 27B NVFP4
@@ -178,3 +179,54 @@ with the weights already in `/srv/ragspark/hf-cache`.
   run in the RAGFlow container): 16.5–17.0 tok/s, no CJK in 15 answers. The
   "thinking" mode is as fast as the others because the server turns thinking
   off unless a request asks for it.
+
+## 7. Installer (stage 3.3)
+
+Evidence for D18, collected 2026-10-09 on the same DGX Spark (DGX OS 7.5,
+Docker 29.6.2, Compose v5.2.0, Python 3.12.3). The stack of stage 3.2 was
+removed with its volumes first; images and weights stayed on the machine.
+
+- **Offline tests on the Spark:** 19 of 19 passed with the machine's Python
+  and Compose.
+- **GPU after `systemctl daemon-reload`** (`ragspark check --gpu-reload`): the
+  test container kept the GPU with Docker's `systemd` cgroup driver. The
+  driver stays as it is (D6).
+- **Installation** (`sudo ./install.sh`, Russian, defaults): every check
+  passed; 6 of 6 images present; GPU visible in the vLLM image; the stack
+  started from empty volumes in **9.4 min**; models registered; acceptance
+  test passed in **16 s** — 2 chunks with Cyrillic share 0.992, both answers
+  correct with a citation (3 s and 2 s), the question with no answer got the
+  "no answer" text without calling the LLM. Listening on the network: ports
+  22 and 80 only.
+- **Weights check:** the Qwen cache was complete, but the offline check
+  through `huggingface_hub` failed with `IncompleteSnapshotError`: it demands
+  three auxiliary files (`crc32.txt`, `hf_quant_config.json`, an empty
+  `safetensors-md5sum.txt`) that vLLM's own download had skipped. The
+  installer fetched them (17.5 kB). The check now reads the cache itself —
+  the snapshot that `refs/main` names, `config.json` and every weight file of
+  the index — so a complete cache needs no network.
+- **Reboot:** Docker itself started `es01` and `ragflow`, the two containers
+  that had exited with a non-zero code at shutdown. The unit stopped them
+  (`ExecStartPre`) and started the stack in order: databases and embeddings
+  at once, reranker after 27 s, LLM after another 25 s, RAGFlow when the LLM
+  was healthy 5.5 min later (compile cache). About 7 min from the start of
+  the unit to a ready stack, no container restarted. The file cache was empty
+  after the cold boot; the models needed no cache flush; 36 GiB available
+  with the stack idle. `ragspark start` during the boot only followed the
+  unit.
+- **Stop and start** (`ragspark stop`, `ragspark start`): all 8 containers
+  stopped; started again in order in 6.2 min.
+- **Chat modes in the web interface:** RAGFlow's chat input defaults to the
+  "Low" reasoning level, which answers through RAGFlow's agentic pipeline. A
+  question there did not finish in 10 minutes ("Running the rag tool...");
+  the tool timeout (600 s) cut it. The pipeline's first helper call — keyword
+  extraction, temperature 0.1, no output limit (RAGFlow strips `max_tokens`
+  from every request) — never returned: vLLM generated that one request for
+  10 minutes with every speculative token accepted, a repetition loop. The
+  same request sent 30 times with an 800-token limit looped 9 times
+  (`"серверная", "серверная", …`). With `frequency_penalty 0.5` it looped in
+  none of 30 runs and all 30 answers were valid JSON; `repetition_penalty 1.1`
+  also gave 0 loops but penalises the prompt's tokens too, `presence_penalty
+  1.5` gave 2. The "Naive" level, which the acceptance test uses, answers in
+  seconds. Fix and a comparison of the levels: before stage 3.4 (open
+  questions in [DECISIONS.md](DECISIONS.md)).

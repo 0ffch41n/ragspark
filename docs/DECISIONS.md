@@ -105,8 +105,13 @@ re-check them before any version bump.
     need model-specific images, and some FP4 kernels have gaps on sm_121;
   - pooling models (embeddings, reranker) run with a neutral entrypoint
     (`/usr/bin/env`), because the image entrypoint is `vllm serve`;
-  - Docker uses the `cgroupfs` driver so that `systemctl daemon-reload` does not
-    revoke GPU access from running containers.
+  - with Docker's `systemd` cgroup driver, `systemctl daemon-reload` can revoke
+    GPU access from running containers (a known NVIDIA Container Toolkit
+    issue). The installer does not change Docker's settings:
+    `ragspark check --gpu-reload` tests the machine, and
+    [INSTALL.md](INSTALL.md) describes the switch to `cgroupfs` (D18). On
+    DGX OS 7.5 with Docker 29.6.2 the test passed with the `systemd` driver
+    (2026-10-09), so it stays.
 
 ## D7. Embeddings and reranker
 
@@ -285,9 +290,9 @@ re-check them before any version bump.
     unified memory, memory taken by another model starting in the same window
     is counted against it, so concurrent starts can leave a model without room
     for its cache;
-  - restart policy `on-failure`: a crashed container restarts, but Docker
-    starts nothing at boot, because it would start everything at once. The
-    installer adds a systemd unit that runs compose (3.3);
+  - restart policy `on-failure:5`: a crashed container restarts. The start at
+    boot is a systemd unit that runs compose (D18). Docker itself does start
+    some containers at boot — see D18 — and the unit puts them back in order;
   - random passwords per install (`init-env.sh`, `.env` with mode 600). The
     session-signing key is set explicitly (`RAGFLOW_SECRET_KEY`); otherwise
     RAGFlow generates one and keeps it in Valkey;
@@ -316,6 +321,64 @@ re-check them before any version bump.
   started without freeing the file cache. Details:
   [VALIDATION.md](VALIDATION.md), section 6.
 
+## D18. Installer — one Python tool, a manifest and a systemd unit
+
+- **What:** `install.sh` runs [installer/](../installer/), a Python 3.10+
+  program that uses the standard library only. The same tool, installed as
+  `/usr/local/bin/ragspark`, has the commands `status`, `start`, `stop`,
+  `restart`, `logs`, `acceptance`, `check` and `uninstall`. Guide:
+  [INSTALL.md](INSTALL.md).
+- **Why Python, not shell:** checks with structured results, a JSON manifest,
+  messages in two languages and tests that run the whole installation with
+  fake `docker` and `systemctl`. DGX OS ships Python 3.12; nothing is
+  installed on the host.
+- **How:**
+  - checks run before any change. Problems that would damage existing data —
+    a stack started by hand, volumes of an earlier stack, an `/opt/ragspark`
+    or a unit file the installer did not create — stop the installation even
+    with `--force`;
+  - files go to `/opt/ragspark`; settings come from `init-env.sh` (D17);
+  - everything created — directories, files, the unit, pulled images (by
+    exact reference), downloaded model repositories — is recorded in
+    `manifest.json`, and uninstall removes exactly that (D12). Images, weights
+    and directories that existed before stay. If `docker compose down` fails,
+    uninstall stops and keeps `.env`, the only copy of the passwords;
+  - every step is idempotent; an interrupted installation resumes with the
+    settings it was started with;
+  - weights are checked offline and downloaded by a temporary container from
+    the vLLM image (`huggingface_hub`), only the formats vLLM loads;
+    `HF_TOKEN`, `HF_ENDPOINT` and proxy variables are passed on;
+  - the unit is `Type=exec` with `RemainAfterExit`: it runs
+    `docker compose up -d --wait` and does not hold up the boot. Before that
+    it stops project containers that run without being healthy. Docker
+    re-evaluates restart policies when it starts, and `on-failure` restarts
+    every container whose last exit code was not 0 (moby
+    `daemon/daemon.go`, `restartmanager`): one killed after the stop timeout
+    (137), Elasticsearch (143), or all of them after a power loss (255).
+    Started together, the models leave each other without memory;
+  - systemd is reloaded before the models start; on a resumed installation
+    the stack is stopped first. `/etc/docker/daemon.json` is not changed:
+    `ragspark check --gpu-reload` runs a container with the GPU, reloads
+    systemd and checks the GPU again, and the switch to `cgroupfs` is a
+    documented manual step (D6);
+  - the installation ends with an acceptance test (D12): a one-page Russian
+    PDF (a fictional memo, generated reproducibly by
+    `acceptance/make_sample.py`) is indexed with RAGSpark's settings (D14,
+    D15), and the chat must answer two questions with the expected facts, a
+    citation and no CJK characters, and give its "no answer" text to a
+    question the document does not answer. The knowledge base and the chat
+    stay as an example;
+  - messages in English and Russian (D11); the log has mode 600 and no
+    passwords; health checks read passwords from the container environment,
+    and Valkey's password is kept off its command line.
+- **Verified (2026-10-09):** installation from scratch on the stage 3.2
+  machine with images and weights present — stack in 9.4 min, acceptance test
+  passed in 16 s; the GPU stays after `systemctl daemon-reload`; after a
+  reboot Docker started two containers by itself, the unit stopped them and
+  started the stack in order in about 7 min; `stop` / `start` in 6.2 min. The
+  offline weights check was rewritten after it asked the network for files
+  vLLM does not need. Details: [VALIDATION.md](VALIDATION.md), section 7.
+
 ## Open questions
 
 - **Scanned documents.** See D14.
@@ -327,9 +390,19 @@ re-check them before any version bump.
   Measure the gain against the extra time.
 - **Upstream reports.** Two RAGFlow defects found in stage 3 (D3 patch 2, D14)
   should be reported to the `0.27.x` branch.
-- **Start at boot.** A systemd unit that runs compose in order (3.3). The
-  stage 3.2 test needed no file-cache flush before the models started; check
-  again after a cold boot, when the cache is empty and nothing else runs.
+- **Agentic chat modes.** RAGFlow's chat input starts at the "Low"
+  reasoning level; every level but "Naive" answers through the agentic
+  pipeline. Its helper calls run at temperature 0.1 without an output limit,
+  and Qwen loops on the keyword request in about a third of the runs — the
+  answer never arrives (VALIDATION, section 7). The pipeline also retrieves
+  without the reranker: none of its retrieval calls passes one, and D15
+  found the reranker decisive for Russian. To fix before stage 3.4, in image
+  `r3`: helper calls with `frequency_penalty 0.5` and an output limit, the
+  reranker in the agentic retrieval, then a measured comparison of all levels
+  before the interface default is chosen.
+- **Database warnings.** RAGFlow logs `Database connection issue (attempt
+  1/5): (0, '')` about every 46 s and reconnects on the first retry. Find the
+  cause (pooled connection closed under it) before it hides a real failure.
 - **Model revisions.** Hugging Face repositories can change under the same
   name. Pin a revision per catalog entry so that every install gets the
   weights that were validated.

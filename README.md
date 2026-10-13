@@ -4,8 +4,9 @@
 
 [Русская версия](README.ru.md)
 
-> **Status: pre-alpha.** The project is being built in public. Nothing here is
-> installable yet — see the roadmap below.
+> **Status: pre-alpha.** The project is being built in public. The installer
+> works on DGX Spark (stage 3.3), but expect changes, and do not use it on a
+> machine whose data you need. See the roadmap below.
 
 ## What it is
 
@@ -29,6 +30,19 @@ citations — with every model running locally and no data leaving the machine.
 | OS | DGX OS 7.x (Ubuntu 24.04 arm64) |
 | Driver | NVIDIA 580.x (pinned — newer branches regress on GB10) |
 | Disk | ~150 GB free for images and model weights |
+
+## Install
+
+```bash
+git clone https://github.com/0ffch41n/ragspark.git
+cd ragspark
+sudo ./install.sh
+```
+
+The installer checks the machine, downloads the images and model weights,
+starts the stack and finishes with an acceptance test. Then
+`sudo ragspark status | start | stop | logs | uninstall`. Guide:
+[docs/INSTALL.md](docs/INSTALL.md).
 
 ## Components
 
@@ -58,7 +72,8 @@ relies on the reranker. The measurements are in
 - [ ] **Stage 3** — `single` mode: install, automatic model setup, built-in acceptance test
   - [x] 3.1 — end-to-end validation on a test stack ([docs/VALIDATION.md](docs/VALIDATION.md), [tools](docs/TOOLS.md))
   - [x] 3.2 — RAGSpark compose ([docs/COMPOSE.md](docs/COMPOSE.md))
-  - [ ] 3.3 — installer; 3.4 — clean install
+  - [x] 3.3 — installer ([docs/INSTALL.md](docs/INSTALL.md))
+  - [ ] 3.4 — clean install
 - [ ] **Stage 4** — model catalog beyond the defaults
 - [ ] **Stage 5** — `stack` mode on two DGX Spark units
 - [ ] **Stage 6** — backups, optional monitoring, offline bundle

@@ -1,0 +1,9 @@
+#!/bin/sh
+# Fake systemctl for installer tests: records calls.
+echo "systemctl $*" >> "${FAKE_STATE}.systemctl"
+case "$1" in
+  is-active) echo active ;;
+  is-enabled) echo enabled ;;
+  show) printf 'ActiveState=active\nSubState=exited\n' ;;
+esac
+exit 0

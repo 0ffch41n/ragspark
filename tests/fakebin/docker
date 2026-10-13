@@ -1,0 +1,97 @@
+#!/usr/bin/env python3
+"""Fake `docker` for installer tests.
+
+State lives in $FAKE_STATE (JSON). `docker compose config ...` is forwarded to
+a real standalone compose binary ($FAKE_COMPOSE) so the compose files and .env
+are validated for real; everything else is simulated.
+"""
+import json, os, subprocess, sys
+
+STATE = os.environ["FAKE_STATE"]
+
+
+def load():
+    try:
+        return json.load(open(STATE))
+    except (OSError, ValueError):
+        return {"images": [], "calls": [], "containers": False, "weights_complete": []}
+
+
+def save(s):
+    json.dump(s, open(STATE, "w"), indent=1)
+
+
+s = load()
+args = sys.argv[1:]
+s["calls"].append(" ".join(a if len(a) < 200 else a[:40] + "..." for a in args))
+save(s)
+
+
+def out(text, code=0):
+    if text:
+        print(text)
+    sys.exit(code)
+
+
+if args[:1] == ["version"]:
+    out("29.6.2")
+if args[:1] == ["info"]:
+    out(json.dumps({"Runtimes": {"nvidia": {}, "runc": {}}, "CgroupDriver": "systemd",
+                    "DockerRootDir": "/var/lib/docker", "RegistryConfig": {"Mirrors": []}}))
+if args[:1] == ["ps"]:
+    if "-a" not in args and "{{.Names}}\t{{.State}}\t{{.Status}}" in args:
+        out("\n".join(s.get("ps_rows", [])))
+    out("")
+if args[:1] == ["stop"]:
+    s["stopped"] = s.get("stopped", []) + args[1:]; save(s)
+    out("\n".join(args[1:]))
+if args[:2] == ["volume", "ls"]:
+    out("\n".join(s.get("volumes", [])))
+if args[:2] == ["image", "inspect"]:
+    out("[]", 0 if args[2] in s["images"] else 1)
+if args[:1] == ["pull"]:
+    s["images"].append(args[1]); save(s)
+    out("pulled " + args[1])
+if args[:1] == ["rmi"]:
+    if args[1] in s["images"]:
+        s["images"].remove(args[1]); save(s)
+        out("Untagged: " + args[1])
+    out("No such image", 1)
+if args[:1] == ["run"]:
+    if "nvidia-smi" in args:
+        out("GPU 0: NVIDIA GB10 (UUID: GPU-fake)")
+    if "python3" in args:                      # weights helper: <repo> <mode> at the end
+        repo, mode = args[-2], args[-1]
+        if mode == "online":
+            s["weights_complete"].append(repo); save(s)
+            out("downloaded " + repo)
+        out("COMPLETE /root/.cache/huggingface/x" if repo in s["weights_complete"] else "MISSING config.json",
+            0 if repo in s["weights_complete"] else 3)
+    out("")
+if args[:1] == ["compose"]:
+    sub = args[1:]
+    if sub[:1] == ["version"]:
+        out("2.39.4")
+    if sub[:1] == ["config"]:
+        p = subprocess.run([os.environ["FAKE_COMPOSE"]] + sub)
+        sys.exit(p.returncode)
+    if sub[:1] == ["up"]:
+        s["containers"] = True; save(s)
+        out("Container ragspark-ragflow-1 Healthy")
+    if sub[:1] == ["exec"]:
+        sys.stdin.read()
+        out("[OK]   fake tool run")
+    if sub[:1] == ["cp"]:
+        out("")
+    if sub[:1] == ["down"]:
+        if s.get("down_fails"):
+            out("Error response from daemon: simulated failure", 1)
+        s["containers"] = False; save(s)
+        out("Removed")
+    if sub[:1] == ["ps"]:
+        if s["containers"]:
+            out(json.dumps({"Service": "ragflow", "State": "running", "Health": "healthy"}))
+        out("")
+    if sub[:1] == ["stop"]:
+        out("")
+out("fake docker: unsupported " + " ".join(args), 1)
