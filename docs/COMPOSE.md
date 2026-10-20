@@ -32,7 +32,7 @@ every `docker compose` command must run from the `compose/` directory.
 | `mysql` | MySQL 8.0.40 | RAGFlow metadata | — |
 | `minio` | pgsty/silo | uploaded files | — |
 | `redis` | Valkey 8 | queues and cache | 128 MB |
-| `ragflow` | RAGSpark r2 | web interface, API, document processing | — |
+| `ragflow` | RAGSpark r3 | web interface, API, document processing | — |
 
 Only `ragflow` publishes a port: its nginx on port 80 (`RAGSPARK_HTTP_BIND`,
 `RAGSPARK_HTTP_PORT`), which serves both the web interface and the API under

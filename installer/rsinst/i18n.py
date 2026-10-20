@@ -188,8 +188,12 @@ MESSAGES = {
     "done_login": ("Login: {email}", "Логин: {email}"),
     "done_password": ("Password: sudo grep ^ADMIN_DEFAULT_PASSWORD= {env} | cut -d= -f2",
                       "Пароль: sudo grep ^ADMIN_DEFAULT_PASSWORD= {env} | cut -d= -f2"),
-    "done_sample": ("Example: the knowledge base and chat \"RAGSpark sample\" answer questions about the sample document.",
-                    "Пример: база знаний и чат «RAGSpark — пример» отвечают на вопросы по образцу документа."),
+    "done_sample": ("Chats: \"RAGSpark sample\" answers from the sample document, \"Assistant\" answers general "
+                    "questions without a knowledge base.",
+                    "Чаты: «RAGSpark — пример» отвечает по документу-примеру, «Ассистент» — на общие вопросы "
+                    "без базы знаний."),
+    "done_assistant": ("Chat \"Assistant\" answers general questions without a knowledge base.",
+                       "Чат «Ассистент» отвечает на общие вопросы без базы знаний."),
     "done_commands": ("Commands: sudo ragspark status | start | stop | logs | acceptance | uninstall",
                       "Команды: sudo ragspark status | start | stop | logs | acceptance | uninstall"),
 

@@ -29,8 +29,11 @@ services:
       - '{"method":"mtp","num_speculative_tokens":3}'
       - --default-chat-template-kwargs
       - '{"enable_thinking": false}'    # RAGFlow does not send it; thinking costs ~10x time
+      # Defaults for requests that do not set their own. max_new_tokens is the
+      # answer-length limit: RAGFlow strips max_tokens from its requests, so
+      # without it a looping generation runs until the 64k context is full.
       - --override-generation-config
-      - '{"temperature": 0.7, "top_p": 0.8, "top_k": 20}'
+      - '{"temperature": 0.7, "top_p": 0.8, "top_k": 20, "max_new_tokens": 8192}'
     healthcheck:
       test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=5)"]
       interval: 20s

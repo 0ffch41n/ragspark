@@ -359,15 +359,18 @@ def step_models():
     return True
 
 
-def step_acceptance(lang):
-    src = os.path.join(paths.install_dir(), "acceptance")
-    code, out = compose(["cp", src + "/.", "ragflow:/tmp/ragspark-acceptance"])
-    if code != 0:
-        ui.status("FAIL", ui.t("acceptance_copy_failed", err=out.strip()[-300:]))
-        return False
+def step_acceptance(lang, assistant_only=False):
+    """The acceptance test; with assistant_only (--skip-acceptance) only the assistant chat is set up."""
+    if not assistant_only:
+        src = os.path.join(paths.install_dir(), "acceptance")
+        code, out = compose(["cp", src + "/.", "ragflow:/tmp/ragspark-acceptance"])
+        if code != 0:
+            ui.status("FAIL", ui.t("acceptance_copy_failed", err=out.strip()[-300:]))
+            return False
+    extra = " --assistant-only" if assistant_only else ""
     with open(os.path.join(paths.install_dir(), "tools", "acceptance.py")) as f:
         code, _ = compose(["exec", "-T", "ragflow", "sh", "-c",
-                           "cd /ragflow && PYTHONPATH=/ragflow .venv/bin/python - --lang %s" % lang],
+                           "cd /ragflow && PYTHONPATH=/ragflow .venv/bin/python - --lang %s%s" % (lang, extra)],
                           capture=False, stdin=f)
     if code != 0:
         ui.status("FAIL", ui.t("acceptance_failed"))
@@ -376,7 +379,7 @@ def step_acceptance(lang):
     return True
 
 
-def finish(config, manifest):
+def finish(config, manifest, sample=True):
     manifest.data["status"] = "installed"
     manifest.data["finished"] = time.strftime("%Y-%m-%dT%H:%M:%S%z")
     manifest.save()
@@ -386,7 +389,7 @@ def finish(config, manifest):
     ui.say(ui.t("done_url", url=url))
     ui.say(ui.t("done_login", email=config["admin_email"]))
     ui.say(ui.t("done_password", env=os.path.join(paths.INSTALL_DIR, "compose", ".env")))
-    ui.say(ui.t("done_sample"))
+    ui.say(ui.t("done_sample" if sample else "done_assistant"))
     ui.say(ui.t("done_commands"))
 
 
@@ -429,12 +432,12 @@ def install(args):
         ("st_service", lambda: step_service(manifest)),
         ("st_start", step_start),
         ("st_models", step_models),
-        ("st_acceptance", lambda: True if args.skip_acceptance else step_acceptance(config["lang"])),
+        ("st_acceptance", lambda: step_acceptance(config["lang"], assistant_only=args.skip_acceptance)),
     ]
     for i, (title, func) in enumerate(steps, start=3):
         ui.step(i, TOTAL, ui.t(title))
         if not func():
             ui.say("\n" + ui.t("install_failed", log=os.path.join(paths.INSTALL_DIR, "install.log")))
             return 1
-    finish(config, manifest)
+    finish(config, manifest, sample=not args.skip_acceptance)
     return 0

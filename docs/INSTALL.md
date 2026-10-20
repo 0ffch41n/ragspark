@@ -53,7 +53,7 @@ sudo ./install.sh --yes --lang en --admin-email admin@example.com --http-port 80
 | `--http-port`, `--http-bind` | web port and the address it listens on (default `0.0.0.0`) |
 | `--models-dir` | directory for model weights |
 | `--llm` | LLM file from `compose/llm/`, without `.yaml` |
-| `--skip-acceptance` | skip the acceptance test |
+| `--skip-acceptance` | skip the acceptance test; the chat "Assistant" is still created |
 | `--no-network` | skip the registry latency check |
 | `--force` | go on despite failed checks (see *Checks*) |
 
@@ -152,23 +152,43 @@ password:
 sudo grep ^ADMIN_DEFAULT_PASSWORD= /opt/ragspark/compose/.env | cut -d= -f2
 ```
 
-The knowledge base and the chat "RAGSpark — пример" ("RAGSpark sample" with
-`--lang en`) are left as a working example with RAGSpark's settings. They can
-be deleted in the web interface; `sudo ragspark acceptance` creates them again
-and replaces a knowledge base or chat with the same name.
+Two chats are ready:
+
+| Chat | Knowledge base | For |
+|---|---|---|
+| "RAGSpark — пример" ("RAGSpark sample" with `--lang en`) | the sample memo | a working example with RAGSpark's settings |
+| "Ассистент" ("Assistant" with `--lang en`) | none | general questions answered by the model alone; it knows neither your documents nor the internet |
+
+The sample knowledge base and chat can be deleted in the web interface;
+`sudo ragspark acceptance` creates them again and replaces a knowledge base or
+chat with the same name. The assistant chat is created once and then left
+alone, with its conversations; if it is deleted, `sudo ragspark acceptance`
+creates it again.
 
 New knowledge bases for Russian documents: language *Russian*, PDF parser
 *Plain Text* (D14 in [DECISIONS.md](DECISIONS.md)). The models are already
 the defaults.
 
-**Known issue — choose "Naive" in the chat.** The selector under the chat
-input sets RAGFlow's reasoning level and starts at "Low". Every level except
-"Naive" answers through RAGFlow's agentic pipeline; with the default model a
-question at "Low" never got its answer (it stayed at "Running the rag
-tool..." until a 10-minute timeout). Select "Naive" once; the browser
-remembers it. A fix is
-planned before stage 3.4; details in [VALIDATION.md](VALIDATION.md),
-section 7.
+### Reasoning levels
+
+The selector under the chat input sets how the chat looks for the answer. It
+starts at "Naive"; the browser remembers the choice.
+
+| Level | How it answers | Time per answer¹ |
+|---|---|---|
+| Naive | one search with the chat's settings and one answer; if nothing passes the threshold, the chat's "no answer" text | 3–8 s |
+| Low | RAGFlow's agentic pipeline: keywords from the question, a search, a check of the result | 15–20 s |
+| Medium, High | the same with more searches, drafts and a review of whether the evidence is enough | about 1–2 min |
+| Ultra | the most rounds | not measured yet |
+
+¹ DGX Spark with the default model, on RAGSpark's question sets
+([VALIDATION.md](VALIDATION.md), section 8).
+
+Naive is enough when the answer is in one place of the documents; the higher
+levels are for questions that need several passages put together. They write
+the answer in their own words, so a question the documents do not answer may
+get "the documents have no information on …" rather than the chat's "no
+answer" text. Background: D19 in [DECISIONS.md](DECISIONS.md).
 
 ## Commands
 
@@ -213,7 +233,13 @@ container and goes through the whole chain:
 4. asks two questions with known answers — the answer must contain the
    expected facts, cite the document and contain no Chinese or Japanese
    characters — and one question the document does not answer, which must get
-   the chat's "no answer" text.
+   the chat's "no answer" text;
+5. asks the first question once more at the level Low, through the agentic
+   pipeline, which must answer it the same way within 5 minutes;
+6. creates the chat "Ассистент" if it does not exist and checks that it
+   answers a simple question.
+
+The test deletes the conversations it opened, so the chats start empty.
 
 The PDF is generated reproducibly from `acceptance/sample-ru.md` by
 `acceptance/make_sample.py`; the questions are in `acceptance/sample-ru.json`.
@@ -280,7 +306,7 @@ passwords.
 | weights download fails | `HF_TOKEN`, `HF_ENDPOINT` or a proxy on the `sudo` command line; or copy the weights into the directory in advance |
 | step 9 fails | `sudo ragspark status`, then `sudo ragspark logs <service>`; [COMPOSE.md](COMPOSE.md), *Troubleshooting* |
 | acceptance test fails | its output names the failed check; `sudo ragspark logs ragflow`; repeat with `sudo ragspark acceptance` |
-| a chat answer hangs at "Running the rag tool..." | select "Naive" under the chat input (see *After installation*) |
+| an answer takes a minute or more | expected at Medium and above (see *Reasoning levels*); Naive answers in seconds |
 | anything else | `/opt/ragspark/install.log` |
 
 ## Development

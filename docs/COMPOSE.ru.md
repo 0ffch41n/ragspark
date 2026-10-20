@@ -32,7 +32,7 @@ Spark: RAGFlow, его базы данных и три сервера модел
 | `mysql` | MySQL 8.0.40 | метаданные RAGFlow | — |
 | `minio` | pgsty/silo | загруженные файлы | — |
 | `redis` | Valkey 8 | очереди и кеш | 128 MB |
-| `ragflow` | RAGSpark r2 | веб-интерфейс, API, обработка документов | — |
+| `ragflow` | RAGSpark r3 | веб-интерфейс, API, обработка документов | — |
 
 Порт публикует только `ragflow`: его nginx на порту 80 (`RAGSPARK_HTTP_BIND`,
 `RAGSPARK_HTTP_PORT`), который отдаёт и веб-интерфейс, и API по пути

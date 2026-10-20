@@ -14,8 +14,13 @@ the sample PDF, waits for parsing and asks the chat the sample questions:
   - an answer must contain the expected facts, cite the document and contain
     no CJK characters;
   - a question with no answer in the document must get the configured
-    "no answer" text, which RAGFlow returns without calling the LLM.
-The dataset and the chat stay as a working example; --cleanup removes them.
+    "no answer" text, which RAGFlow returns without calling the LLM;
+  - the first question is asked once more at reasoning level Low (RAGFlow's
+    agentic pipeline), which must answer it as well.
+It also makes sure the chat "Ассистент" ("Assistant") exists: a chat without a
+knowledge base for general questions, created once and then left alone, and
+checks that it answers. Sessions the test opened are deleted at the end.
+The dataset and the example chat stay as a working example; --cleanup removes them.
 Exit code 0 means passed.
 """
 import argparse, base64, http.cookiejar, json, os, re, sys, time, urllib.error, urllib.parse, urllib.request, uuid
@@ -41,6 +46,14 @@ TEXT = {
                    "японские и корейские иероглифы. Опирайся только на сведения из базы знаний "
                    "ниже; если ответа в ней нет, так и скажи. Учитывай историю диалога.\n"
                    "База знаний:\n{knowledge}\nКонец базы знаний."),
+        "assistant": "Ассистент",
+        "assistant_prologue": ("Здравствуйте! Я отвечаю на общие вопросы. Для вопросов по вашим документам "
+                               "откройте чат с базой знаний."),
+        "assistant_system": ("Ты — ассистент, который работает на локальной модели без доступа к интернету и к "
+                             "документам организации. Отвечай на языке вопроса, по существу. Не используй "
+                             "китайские, японские и корейские иероглифы. Если не уверен в факте, так и скажи; "
+                             "для вопросов по документам предложи открыть чат с базой знаний."),
+        "assistant_check": ("Сколько будет 17 умножить на 3? Ответь одним числом.", ["51"]),
     },
     "en": {
         "name": "RAGSpark sample",
@@ -51,6 +64,14 @@ TEXT = {
                    "point. Do not use Chinese, Japanese or Korean characters. Use only the "
                    "knowledge base below; if it has no answer, say so. Consider the chat history.\n"
                    "Knowledge base:\n{knowledge}\nEnd of the knowledge base."),
+        "assistant": "Assistant",
+        "assistant_prologue": ("Hello! I answer general questions. For questions about your documents, open a "
+                               "chat with a knowledge base."),
+        "assistant_system": ("You are an assistant running on a local model without access to the internet or "
+                             "to the organisation's documents. Answer in the language of the question, to the "
+                             "point. Do not use Chinese, Japanese or Korean characters. If you are not sure of "
+                             "a fact, say so; for questions about documents, suggest a chat with a knowledge base."),
+        "assistant_check": ("What is 17 times 3? Answer with a number only.", ["51"]),
     },
 }
 
@@ -269,15 +290,40 @@ def norm(s):
     return re.sub(r"\s+", " ", (s or "").lower().replace("ё", "е"))
 
 
-def ask(chat, question):
+SESSIONS = []          # (chat, session) created by the test; deleted at the end
+
+
+def ask(chat, question, reasoning=None, timeout=600):
+    """One question; reasoning=1 asks through RAGFlow's agentic pipeline (level Low)."""
     t0 = time.time()
-    code, d, _ = call("POST", "/api/v1/chat/completions",
-                      {"chat_id": chat, "question": question, "stream": False}, timeout=600)
+    body = {"chat_id": chat, "question": question, "stream": False}
+    if reasoning is not None:
+        body["reasoning"] = reasoning
+    code, d, _ = call("POST", "/api/v1/chat/completions", body, timeout=timeout)
     if not ok(code, d):
         return None, [], time.time() - t0, err(code, d)
     data = d.get("data") or {}
+    if data.get("session_id"):
+        SESSIONS.append((chat, data["session_id"]))
     refs = (data.get("reference") or {}).get("chunks") or []
-    return data.get("answer") or "", refs, time.time() - t0, ""
+    answer = data.get("answer") or ""
+    if "</think>" in answer:              # the agentic path puts its progress before </think>
+        answer = answer.rsplit("</think>", 1)[1]
+    return answer.strip(), refs, time.time() - t0, ""
+
+
+def check_facts(label, answer, refs, dt, expect, need_sources=True):
+    short = " ".join((answer or "").split())[:160]
+    missing = [e for e in expect if norm(e) not in norm(answer)]
+    cjk = CJK.findall(answer)
+    if missing:
+        report("FAIL", "%s -> missing %s in: %s (%d sources, %.0f s)" % (label, missing, short, len(refs), dt))
+    elif need_sources and not refs:
+        report("FAIL", "%s -> answer has no sources: %s (%.0f s)" % (label, short, dt))
+    elif cjk:
+        report("FAIL", "%s -> CJK characters %r in: %s (%.0f s)" % (label, "".join(cjk)[:10], short, dt))
+    else:
+        report("OK", "%s -> %s (%d sources, %.0f s)" % (label, short, len(refs), dt))
 
 
 def check_answers(chat, questions, empty_text):
@@ -294,16 +340,52 @@ def check_answers(chat, questions, empty_text):
             else:
                 report("FAIL", "%s -> expected the \"no answer\" text, got: %s (%d sources)" % (q, short, len(refs)))
             continue
-        missing = [e for e in expect if norm(e) not in norm(answer)]
-        cjk = CJK.findall(answer)
-        if missing:
-            report("FAIL", "%s -> missing %s in: %s" % (q, missing, short))
-        elif not refs:
-            report("FAIL", "%s -> answer has no sources: %s" % (q, short))
-        elif cjk:
-            report("FAIL", "%s -> CJK characters %r in: %s" % (q, "".join(cjk)[:10], short))
-        else:
-            report("OK", "%s -> %s (%d sources, %.0f s)" % (q, short, len(refs), dt))
+        check_facts(q, answer, refs, dt, expect)
+
+
+def check_low(chat, item):
+    """The agentic pipeline (level Low) must answer too, and in reasonable time."""
+    answer, refs, dt, error = ask(chat, item["q"], reasoning=1, timeout=300)
+    label = "[Low] " + item["q"]
+    if answer is None:
+        report("FAIL", "%s -> request failed: %s" % (label, error))
+        return
+    check_facts(label, answer, refs, dt, item["expect"])
+
+
+def ensure_assistant(text):
+    """The general-purpose chat without a knowledge base: created once, then left alone
+    (people keep their conversations in it), and checked on every run."""
+    name = text["assistant"]
+    code, d, _ = call("GET", "/api/v1/chats?" + urllib.parse.urlencode({"name": name}))
+    found = [c["id"] for c in items(d) if c.get("name") == name] if ok(code, d) else []
+    if found:
+        chat = found[0]
+        report("OK", "chat %r exists" % name)
+    else:
+        code, d, _ = call("POST", "/api/v1/chats", {
+            "name": name, "dataset_ids": [],
+            "prompt_config": {"system": text["assistant_system"], "prologue": text["assistant_prologue"],
+                              "empty_response": "", "quote": False, "parameters": []}})
+        if not ok(code, d):
+            report("FAIL", "create chat %r: %s" % (name, err(code, d)))
+            return
+        chat = d["data"]["id"]
+        report("OK", "chat %r created (no knowledge base)" % name)
+    question, expect = text["assistant_check"]
+    answer, refs, dt, error = ask(chat, question)
+    if answer is None:
+        report("FAIL", "%s -> request failed: %s" % (question, error))
+        return
+    check_facts("[%s] %s" % (name, question), answer, refs, dt, expect, need_sources=False)
+
+
+def delete_sessions():
+    by_chat = {}
+    for chat, session in SESSIONS:
+        by_chat.setdefault(chat, []).append(session)
+    for chat, ids in by_chat.items():
+        call("DELETE", "/api/v1/chats/%s/sessions" % chat, {"ids": ids})
 
 
 def main():
@@ -311,10 +393,18 @@ def main():
     ap.add_argument("--dir", default="/tmp/ragspark-acceptance", help="copied acceptance/ directory")
     ap.add_argument("--spec", default="sample-ru.json")
     ap.add_argument("--lang", default=os.environ.get("RAGSPARK_LANG", "ru"), choices=sorted(TEXT))
-    ap.add_argument("--cleanup", action="store_true", help="remove the dataset and chat afterwards")
+    ap.add_argument("--cleanup", action="store_true", help="remove the example dataset and chat afterwards")
+    ap.add_argument("--no-agentic", action="store_true", help="skip the question in the agentic mode (Low)")
+    ap.add_argument("--assistant-only", action="store_true",
+                    help="only create and check the assistant chat (installer with --skip-acceptance)")
     a = ap.parse_args()
-    spec = json.load(open(os.path.join(a.dir, a.spec), encoding="utf-8"))
     text = TEXT[a.lang]
+    if a.assistant_only:
+        login()
+        ensure_assistant(text)
+        delete_sessions()
+        sys.exit(1 if problems else 0)
+    spec = json.load(open(os.path.join(a.dir, a.spec), encoding="utf-8"))
     name = text["name"]
     print("== RAGSpark acceptance test ==", flush=True)
     t0 = time.time()
@@ -327,6 +417,11 @@ def main():
     check_chunks(ds, doc, float(spec.get("min_cyrillic_share", 0.8)))
     chat = create_chat(name, ds, text)
     check_answers(chat, spec["questions"], text["empty"])
+    first = next((q for q in spec["questions"] if q.get("expect")), None)
+    if first and not a.no_agentic:
+        check_low(chat, first)
+    ensure_assistant(text)
+    delete_sessions()
 
     if a.cleanup:
         remove_previous(name)

@@ -47,13 +47,19 @@ re-check them before any version bump.
   emulation), slim edition (no bundled embedding models — vLLM provides them),
   publish to GHCR as `ghcr.io/0ffch41n/ragspark-ragflow`, reference by digest.
   Recipe: [BUILD.md](BUILD.md).
-- **Published:** `0.27.2-arm64-r2` (2026-10-08),
-  `sha256:4232ddbb513cff48c51864f081f6b82d37371927dea70bb01a200c6994f70dcc`, with both patches below.
-  It replaces `0.27.2-arm64-r1` (2026-10-01,
-  `sha256:1bf5fc0031bff2d775dc8bc1626b2820f9b658b43696a9bb4bdc02a8304f0660`),
-  which had patch 1 only.
-- **Deviations from upstream** — two, each applied by a script that refuses to
-  run if the code it expects is not there:
+- **Published:** `0.27.2-arm64-r4` (2026-10-19),
+  `sha256:1ed7725f5932a4799591104b5efd1d1ed7f50984e070be24ed4251d27341e0f8`,
+  the first image with all patches below. It replaces `0.27.2-arm64-r3`
+  (2026-10-14,
+  `sha256:8d08d824a9b248fceba8a0c5885aaf3cef7f24c7137ec87154aef53031c22e5a`,
+  built before the last three edits of patch 4 and missing two of its fixes —
+  see [BUILD.md](BUILD.md)), `0.27.2-arm64-r2` (2026-10-08,
+  `sha256:4232ddbb513cff48c51864f081f6b82d37371927dea70bb01a200c6994f70dcc`,
+  patches 1–2) and `0.27.2-arm64-r1` (2026-10-01,
+  `sha256:1bf5fc0031bff2d775dc8bc1626b2820f9b658b43696a9bb4bdc02a8304f0660`,
+  patch 1).
+- **Deviations from upstream** — five, each applied by a script that refuses
+  to run if the code it expects is not there:
   1. The Chrome/ChromeDriver steps run on x86_64 only: the archives in
      `ragflow_deps` are x86 builds that cannot run on arm64. Browser-driven
      features (e.g. web crawling in agents) are unavailable on arm64.
@@ -62,6 +68,15 @@ re-check them before any version bump.
      space after a non-Latin letter, so Russian chunks reach the reranker as one
      long word and rerank scores drop 2–3x. See D15 and
      [VALIDATION.md](VALIDATION.md); to be reported upstream.
+  3. Vector search no longer requires a word match (`r3`). Upstream passes
+     the full-text query to kNN as its filter, so only chunks sharing words
+     with the question are ranked; RAGFlow does not reduce Russian words to a
+     common form, and a question worded differently from the document finds
+     nothing. RAGFlow's own function that drops that filter is commented out;
+     the patch calls it. See D19.
+  4. Twelve fixes to the agentic chat pipeline (`r3`, `r4`), D19.
+  5. The chat input starts at the "Naive" reasoning level instead of "Low"
+     (`r3`), D19.
 - **Verified (2026-10-01):** the unmodified upstream build completed on a DGX
   Spark; with RAGFlow's own compose, the server reported `v0.27.2`, served the
   web UI, and Elasticsearch, MySQL, Valkey and the object store were healthy.
@@ -252,13 +267,17 @@ re-check them before any version bump.
   chats are told to set them.
 - **Risk:** measured on one document and 10 questions; the margin below 0.1 is
   not measured yet. The acceptance test re-checks every install.
+- **Since `r3`** vector search also finds chunks that share no word with the
+  question (D3 patch 3, D19). The same matrix on the same manual was
+  unchanged cell for cell in its totals: the reranker and the 0.1 threshold
+  still reject both no-answer questions.
 
 ## D16. Default LLM — Qwen 3.8 27B NVFP4 with MTP
 
 - **Decision:** `Inferact/Qwen3.8-27B-NVFP4` on the official vLLM 0.27.1
   image, multi-token prediction with 3 speculative tokens, thinking disabled
-  and sampling (temperature 0.7, top-p 0.8, top-k 20) set on the server. Flags
-  are in [compose/llm/qwen-3.8-27b-nvfp4.yaml](../compose/llm/qwen-3.8-27b-nvfp4.yaml).
+  and sampling (temperature 0.7, top-p 0.8, top-k 20) and an 8192-token
+  answer limit set on the server (D19). Flags are in [compose/llm/qwen-3.8-27b-nvfp4.yaml](../compose/llm/qwen-3.8-27b-nvfp4.yaml).
 - **Why:** strong open model in its size class, Apache-2.0, native tool
   calling, decode speed nearly flat on long contexts. In Russian probes
   (30 answers) it never mixed in other scripts and cited sources correctly.
@@ -273,7 +292,7 @@ re-check them before any version bump.
 ## D17. Runtime — RAGSpark's own compose
 
 - **What:** [compose/](../compose/) replaces RAGFlow's compose: one project,
-  `ragspark`, with RAGFlow (image `r2`), Elasticsearch, MySQL, object storage,
+  `ragspark`, with RAGFlow (image `r3`), Elasticsearch, MySQL, object storage,
   Valkey and three vLLM services. The LLM lives in its own file under
   `compose/llm/`, selected with `COMPOSE_FILE` in `.env`. Guide:
   [COMPOSE.md](COMPOSE.md).
@@ -366,8 +385,11 @@ re-check them before any version bump.
     `acceptance/make_sample.py`) is indexed with RAGSpark's settings (D14,
     D15), and the chat must answer two questions with the expected facts, a
     citation and no CJK characters, and give its "no answer" text to a
-    question the document does not answer. The knowledge base and the chat
-    stay as an example;
+    question the document does not answer; the first question is asked
+    again at reasoning level Low (D19). The knowledge base and the chat stay
+    as an example. The test also creates, once, the chat "Ассистент"
+    ("Assistant") without a knowledge base for general questions, and checks
+    that it answers (with `--skip-acceptance` only this part runs);
   - messages in English and Russian (D11); the log has mode 600 and no
     passwords; health checks read passwords from the container environment,
     and Valkey's password is kept off its command line.
@@ -379,6 +401,76 @@ re-check them before any version bump.
   offline weights check was rewritten after it asked the network for files
   vLLM does not need. Details: [VALIDATION.md](VALIDATION.md), section 7.
 
+## D19. Chat modes — Naive by default, agentic levels made to work
+
+- **What:** the reasoning selector under RAGFlow's chat input. Level 0,
+  "Naive", is the classic path: retrieval with the D15 settings, one LLM call,
+  or the chat's "no answer" text without one. Levels 1–4 (Low, Medium, High,
+  Ultra) answer through RAGFlow's agentic pipeline: an outer model with a
+  `rag` tool, then keyword extraction, search, an intermediate draft and a
+  sufficiency review, more of each per level.
+- **Found (stage 3.3):** with Russian documents and Qwen 3.8 27B none of the
+  agentic levels worked. Low hung for ten minutes; Medium answered "no answer"
+  to everything; a paraphrased question found nothing at any level.
+- **Decision:** images `r3` and `r4` fix the causes (all in RAGFlow, none in
+  the model), and the selector starts at **Naive**: the same answers on RAGSpark's
+  question sets in 3 s instead of 15 s for Low and up to 1–2 min for Medium and
+  High. The other levels stay in the selector for questions that need several
+  searches.
+- **Fixes:**
+  - kNN without the full-text filter (D3 patch 3): a question worded unlike
+    the document now finds it;
+  - the pipeline's helper calls get `frequency_penalty 0.5` and a
+    2048-token limit (`RAGSPARK_HELPER_FREQUENCY_PENALTY`,
+    `RAGSPARK_HELPER_MAX_TOKENS`): at temperature 0.1 and with no limit, the
+    keyword request looped in 9 of 30 runs until the 64k context was full;
+  - Medium, High, Ultra: a flag set to "nothing found" at the start was never
+    cleared, so the answer step discarded the evidence;
+  - the agentic search uses the chat's reranker, scoring the question rather
+    than the question plus generated keywords;
+  - in a chat with knowledge bases the outer model answers only through the
+    `rag` tool — it had answered "capital of Australia" itself, once
+    "Sydney"; chats without a knowledge base keep the upstream prompt;
+  - a note meant for the outer model ("[Research status] …") is removed from
+    the answer;
+  - vLLM's default answer limit is 8192 tokens (`max_new_tokens`), since
+    RAGFlow strips `max_tokens` from every request;
+  - passages are not narrowed by Cyrillic keywords: after each search the
+    pipeline kept only the passages mentioning one of the question's keywords,
+    stem-tolerant for ASCII words but verbatim for anything else, so Russian
+    word forms dropped the passage that held the answer;
+  - in a chat with knowledge bases the first round must call `rag`: on
+    `tool_choice "auto"` the outer model skipped the tool in 3 of 9 Low
+    questions and its own plain text came back as the answer;
+  - the research budget is `RAGSPARK_AGENTIC_BUDGET_S`, 300 s by default
+    instead of a hard-coded 180 s: at this model's ~17 tok/s High and Ultra
+    spent the ceiling inside the first research round, and the routing guards
+    then synthesised an answer from partial evidence. The per-call bounds are
+    unchanged, so the larger budget buys more research rounds, not longer
+    calls;
+  - the planner and the upper levels write their search queries in the
+    question's language: none of the three prompts that produce queries stated
+    a language, so a Russian question was split into English sub-questions
+    ("knowledge base backup schedule"), which match nothing in a Russian
+    corpus — the one failure neither the reranker nor the kNN fix can repair;
+  - the sufficiency review tolerates claim items that are not objects: it
+    reads the review as a list of claim objects, the model sometimes answers
+    `"claims": ["c0", …]`, and `item.get()` on a string raised
+    `AttributeError` out of the graph — `_bounded` handles only
+    `TimeoutError`, so Ultra ended in a traceback instead of an answer.
+- **Verified (2026-10-12/13 and 2026-10-19):** each set of fixes was first
+  hot-patched into the running container — `r2` for the first eight, `r3` for
+  the last four — and measured with
+  [tools/mode_eval.py](../tools/mode_eval.py) on the acceptance sample and the
+  stage 3.1 manual. With all of them every level answers 7/7 and still rejects
+  the question the documents do not answer; with the first eight alone Medium
+  gave 6/7, High 5/7 and Ultra 6/7. The image that carries all twelve is
+  `r4`. Details: [VALIDATION.md](VALIDATION.md), section 8.
+- **Behaviour to know:** the agentic levels write their own answer whenever
+  they find passages, so for a question the documents do not answer, Medium
+  may reply "the documents have no information on …" in its own words instead
+  of the chat's "no answer" text, or infer an answer from what it found.
+
 ## Open questions
 
 - **Scanned documents.** See D14.
@@ -388,18 +480,13 @@ re-check them before any version bump.
 - **Auto-question and keyword analysis.** Both use the LLM to improve matching
   (questions generated per chunk at indexing; keywords extracted per query).
   Measure the gain against the extra time.
-- **Upstream reports.** Two RAGFlow defects found in stage 3 (D3 patch 2, D14)
-  should be reported to the `0.27.x` branch.
-- **Agentic chat modes.** RAGFlow's chat input starts at the "Low"
-  reasoning level; every level but "Naive" answers through the agentic
-  pipeline. Its helper calls run at temperature 0.1 without an output limit,
-  and Qwen loops on the keyword request in about a third of the runs — the
-  answer never arrives (VALIDATION, section 7). The pipeline also retrieves
-  without the reranker: none of its retrieval calls passes one, and D15
-  found the reranker decisive for Russian. To fix before stage 3.4, in image
-  `r3`: helper calls with `frequency_penalty 0.5` and an output limit, the
-  reranker in the agentic retrieval, then a measured comparison of all levels
-  before the interface default is chosen.
+- **Upstream reports.** RAGFlow defects found in stage 3 should be reported to
+  the `0.27.x` branch: the reranker input (D3 patch 2), DeepDOC on Cyrillic
+  (D14), the kNN filter (D3 patch 3) and the agentic-pipeline defects of D19.
+- **Ultra.** The fourth level answers 7/7 on the acceptance sample (`r4`), but
+  its own distinguishing feature is still untested: the knowledge-graph tool
+  needs a graph built at indexing, and none of RAGSpark's question sets has
+  one, so the level was measured without it.
 - **Database warnings.** RAGFlow logs `Database connection issue (attempt
   1/5): (0, '')` about every 46 s and reconnects on the first retry. Find the
   cause (pooled connection closed under it) before it hides a real failure.
@@ -414,7 +501,7 @@ re-check them before any version bump.
 - **Dependency image.** The upstream Dockerfile copies data files (OCR models,
   NLTK data, Tika, uv) from `infiniflow/ragflow_deps:latest`, a floating tag.
   Pin it by digest in the build so that a rebuild reproduces the published
-  image; the digest used for `r2` is in [BUILD.md](BUILD.md).
+  image; the digests used for each image are in [BUILD.md](BUILD.md).
 
 ---
 

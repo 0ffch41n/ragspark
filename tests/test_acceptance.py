@@ -28,8 +28,10 @@ class Acceptance(unittest.TestCase):
         code, out, state = self.run_tool("good")
         self.assertEqual(code, 0, out)
         self.assertIn("acceptance passed", out)
-        self.assertEqual(len(state.chats), 1)
-        chat = list(state.chats.values())[0]
+        self.assertEqual(sorted(c["name"] for c in state.chats.values()), ["RAGSpark — пример", "Ассистент"])
+        self.assertIn(1, state.levels)                                       # one question at level Low
+        self.assertEqual(len(state.deleted_sessions), len(state.levels))     # no test sessions left behind
+        chat = [c for c in state.chats.values() if c["name"] == "RAGSpark — пример"][0]
         self.assertEqual(chat["vector_similarity_weight"], 0.7)
         self.assertEqual(chat["similarity_threshold"], 0.1)
         self.assertIn("{knowledge}", chat["prompt_config"]["system"])
@@ -44,7 +46,7 @@ class Acceptance(unittest.TestCase):
                                     "--dir", os.path.join(ROOT, "acceptance")], env=env,
                                    capture_output=True, text=True, timeout=120)
                 self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
-            self.assertEqual(len(state.chats), 1)
+            self.assertEqual(len(state.chats), 2)                       # example replaced, assistant kept
             self.assertEqual(len(state.datasets), 1)
         finally:
             srv.shutdown()
@@ -52,7 +54,14 @@ class Acceptance(unittest.TestCase):
     def test_cleanup(self):
         code, out, state = self.run_tool("good", "--cleanup")
         self.assertEqual(code, 0, out)
-        self.assertEqual((len(state.chats), len(state.datasets)), (0, 0))
+        self.assertEqual([c["name"] for c in state.chats.values()], ["Ассистент"])   # the assistant stays
+        self.assertEqual(len(state.datasets), 0)
+
+    def test_assistant_only(self):
+        code, out, state = self.run_tool("good", "--assistant-only")
+        self.assertEqual(code, 0, out)
+        self.assertEqual([c["name"] for c in state.chats.values()], ["Ассистент"])
+        self.assertEqual(len(state.datasets), 0)
 
     def test_invented_answer_fails(self):
         code, out, _ = self.run_tool("leak")
@@ -67,7 +76,51 @@ class Acceptance(unittest.TestCase):
     def test_english_names(self):
         code, out, state = self.run_tool("good", "--lang", "en")
         self.assertEqual(code, 0, out)
-        self.assertEqual(list(state.chats.values())[0]["name"], "RAGSpark sample")
+        self.assertEqual(sorted(c["name"] for c in state.chats.values()), ["Assistant", "RAGSpark sample"])
+
+
+class ModeEval(unittest.TestCase):
+    """tools/mode_eval.py against the same mock, after the acceptance test made the example chat."""
+
+    def test_compares_levels_and_cleans_up(self):
+        import json
+        import tempfile
+        with open(os.path.join(ROOT, "acceptance", "sample-ru.json"), encoding="utf-8") as f:
+            questions = json.load(f)["questions"]
+        tmp = tempfile.NamedTemporaryFile("w", suffix=".json", delete=False, encoding="utf-8")
+        json.dump(questions, tmp, ensure_ascii=False)
+        tmp.close()
+        self.addCleanup(os.remove, tmp.name)
+        QUESTIONS = tmp.name
+        srv, state, url = mock_ragflow.serve("good")
+        try:
+            env = dict(os.environ, RAGFLOW_API=url, ADMIN_DEFAULT_PASSWORD="secret",
+                       PYTHONPATH=os.path.join(ROOT, "tests", "fake"))
+            p = subprocess.run([sys.executable, os.path.join(ROOT, "tools", "acceptance.py"),
+                                "--dir", os.path.join(ROOT, "acceptance")], env=env, capture_output=True, text=True)
+            self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+            levels_before = len(state.levels)
+            p = subprocess.run([sys.executable, os.path.join(ROOT, "tools", "mode_eval.py"), "--modes", "0,1",
+                                "--questions", QUESTIONS, "--trace"],
+                               env=env, capture_output=True, text=True, timeout=120)
+            out = p.stdout + p.stderr
+            self.assertEqual(p.returncode, 0, out)
+            self.assertEqual(state.levels[levels_before:], [0, 0, 0, 1, 1, 1])
+            self.assertRegex(out, r"Naive\s+2/2\s+1/1")
+            self.assertRegex(out, r"Low\s+2/2\s+1/1")                    # <think> block stripped
+            self.assertIn("| [Hybrid search] Kept 2 of 2 passage(s).", out)   # --trace shows the progress log
+            self.assertEqual(len(state.deleted_sessions), levels_before + 6)
+
+            # --dataset: a temporary chat with RAGSpark's settings, deleted afterwards
+            p = subprocess.run([sys.executable, os.path.join(ROOT, "tools", "mode_eval.py"), "--modes", "0",
+                                "--dataset", "RAGSpark — пример", "--questions", QUESTIONS],
+                               env=env, capture_output=True, text=True, timeout=120)
+            out = p.stdout + p.stderr
+            self.assertEqual(p.returncode, 0, out)
+            self.assertRegex(out, r"Naive\s+2/2\s+1/1")
+            self.assertEqual(len(state.chats), 2)                            # the temporary chat is gone
+        finally:
+            srv.shutdown()
 
 
 if __name__ == "__main__":

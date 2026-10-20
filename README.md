@@ -48,7 +48,7 @@ starts the stack and finishes with an acceptance test. Then
 
 | Component | Version | Notes |
 |---|---|---|
-| RAGFlow | 0.27.2 | built for arm64 by this project, with two documented fixes — no official arm64 images exist ([how](docs/BUILD.md)) |
+| RAGFlow | 0.27.2 | built for arm64 by this project, with documented fixes — no official arm64 images exist ([how](docs/BUILD.md)) |
 | Elasticsearch | 8.11.3 | the version RAGFlow pins |
 | MySQL | 8.0 | RAGFlow metadata |
 | Valkey | 8 | RAGFlow task queue |
@@ -62,7 +62,9 @@ See [catalog/models.yaml](catalog/models.yaml).
 
 **Russian documents:** RAGFlow's defaults do not work well for Russian, and
 RAGSpark changes them — PDFs are read from their text layer, and retrieval
-relies on the reranker. The measurements are in
+relies on the reranker. RAGFlow's agentic chat modes (Low … Ultra) failed on
+Russian documents and are fixed in RAGSpark's image; the chat starts in the
+fast classic mode. The measurements are in
 [docs/VALIDATION.md](docs/VALIDATION.md). Scanned PDFs are not supported yet.
 
 ## Roadmap

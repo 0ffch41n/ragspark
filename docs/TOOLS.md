@@ -3,7 +3,7 @@
 [Русская версия](TOOLS.ru.md)
 
 Standalone Python scripts for setting up and checking a RAGSpark stack. They
-need nothing beyond the Python standard library. Four of them run *inside*
+need nothing beyond the Python standard library. Five of them run *inside*
 the RAGFlow container: it can reach the vLLM services by name, has RAGFlow's
 own password encryption, and already holds the superuser credentials and the
 LLM settings in its environment (`compose/.env` and the LLM file).
@@ -50,8 +50,12 @@ sample" with `--lang en`) with RAGSpark's settings, uploads the sample PDF,
 waits for parsing and asks the chat the sample questions. Answers must contain
 the expected facts, cite the document and contain no CJK characters; a
 question the document does not answer must get the chat's "no answer" text.
+The first question is asked again at the level Low (the agentic pipeline).
 A knowledge base and chat with the same name are replaced; the new ones stay
-as an example. Details: [INSTALL.md](INSTALL.md), *Acceptance test*.
+as an example. The chat "Ассистент" ("Assistant"), without a knowledge base,
+is created if it does not exist and checked with a simple question; an
+existing one is left as it is. The conversations the test opened are deleted.
+Details: [INSTALL.md](INSTALL.md), *Acceptance test*.
 
 ```bash
 sudo ragspark acceptance              # on an installed machine
@@ -65,7 +69,9 @@ sudo docker compose exec -T ragflow \
 |---|---|
 | `--lang ru\|en` | names, prompts and "no answer" text of the example |
 | `--dir DIR` | directory with the sample files inside the container (default `/tmp/ragspark-acceptance`) |
-| `--cleanup` | delete the knowledge base and chat after the test |
+| `--cleanup` | delete the example knowledge base and chat after the test (the assistant chat stays) |
+| `--no-agentic` | skip the question at the level Low |
+| `--assistant-only` | only create and check the assistant chat (the installer with `--skip-acceptance`) |
 
 ## rag_eval.py — parsing and retrieval quality
 
@@ -96,6 +102,41 @@ returned something (top score shown).
 The built-in question set targets the Russian manual of the MSI MPG B550
 Gaming Plus motherboard (39-page excerpt). The manual is not distributed with
 RAGSpark; for other documents pass `--questions`.
+
+## mode_eval.py — chat modes compared
+
+Asks one chat the same questions at each reasoning level of the selector
+under the chat input — 0 Naive, 1 Low, 2 Medium, 3 High, 4 Ultra (D19) —
+through the API, and reports for every answer the time, the verdict and the
+number of sources, then a summary per level. The conversations it opens are
+deleted at the end.
+
+```bash
+# the example chat, the acceptance sample's questions, Naive, Low and Medium:
+sudo docker compose exec -T ragflow \
+  sh -c 'cd /ragflow && PYTHONPATH=/ragflow .venv/bin/python - --modes 0,1,2' < ../tools/mode_eval.py
+# a temporary chat over the knowledge base "test", the MSI question set:
+sudo docker compose exec -T ragflow \
+  sh -c 'cd /ragflow && PYTHONPATH=/ragflow .venv/bin/python - --dataset test --set msi' < ../tools/mode_eval.py
+```
+
+| Option | Effect |
+|---|---|
+| `--chat NAME` | chat to ask (default "RAGSpark — пример") |
+| `--dataset NAME` | instead, a temporary chat over this knowledge base with RAGSpark's settings, deleted afterwards |
+| `--modes 0,1,2,3,4` | levels to run (default all five) |
+| `--set sample\|msi` | built-in questions: 7 + 1 about the acceptance sample (default), or the stage 3.1 MSI set |
+| `--questions FILE` | JSON list of `{"q": ..., "expect": [...]}` instead; an `expect` item can be a list of alternatives; `"expect": null` marks a question with no answer in the documents |
+| `--timeout S` | seconds per answer (default 900) |
+| `--keep-sessions` | keep the conversations |
+| `--trace` | under each answer, the progress log the agentic levels show as "thinking" in the web interface (searches, passages kept, answer composition) |
+
+Verdicts: `ok`; `miss` — expected facts missing; `no-src` — no sources;
+`cjk` — CJK characters in the answer; for a question with no answer in the
+documents `ok` is the chat's "no answer" text, `LEAK` — another answer with
+sources, `LEAK-own` — another answer without sources; `TIMEOUT`, `ERROR`. The
+summary counts `ok` among the questions with answers and among those without.
+At Medium and above, expect 1–2 minutes per answer.
 
 ## model_probe.py — LLM language and speed check
 

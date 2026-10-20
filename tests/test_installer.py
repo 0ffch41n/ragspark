@@ -255,6 +255,17 @@ class EndToEnd(unittest.TestCase):
         self.assertEqual(len(rmi), 5)            # the pre-existing vLLM image is not touched
         self.assertTrue(all("@sha256:" in c for c in rmi))
 
+    def test_skip_acceptance_still_sets_up_the_assistant(self):
+        code, out = self.ragspark("install", "--yes", "--force", "--no-network", "--skip-acceptance")
+        self.assertEqual(code, 0, out)
+        calls = json.load(open(self.state))["calls"]
+        self.assertFalse(any(c.startswith("compose cp") for c in calls))    # no sample copied
+        tool = [c for c in calls if c.startswith("compose exec")]
+        self.assertEqual(len(tool), 2, tool)                                # models, then the assistant
+        self.assertIn("--assistant-only", tool[-1])
+        self.assertIn("Чат «Ассистент»", out)
+        self.assertNotIn("RAGSpark — пример", out)
+
     def test_interrupted_install_resumes(self):
         # Fail at the image step: compose config works, but every pull fails.
         fakebin = os.path.join(self.tmp, "bin")

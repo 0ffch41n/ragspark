@@ -7,7 +7,8 @@ Sections 1–5 are stage 3.1: evidence behind decisions D8 and D14–D16 in
 Spark (GB10, DGX OS 7.5.0, driver 580.178.04, CUDA 13.0) with RAGFlow's own
 compose, the RAGSpark image `0.27.2-arm64-r1` and three vLLM containers on the
 same Docker network. Section 6 is stage 3.2, RAGSpark's own compose (D17);
-section 7 is stage 3.3, the installer (D18).
+section 7 is stage 3.3, the installer (D18); section 8 is the chat modes and
+the image `r3` (D19).
 Numbers can be reproduced with the scripts in [tools/](../tools/).
 
 ## 1. LLM serving — Qwen 3.8 27B NVFP4
@@ -228,5 +229,120 @@ removed with its volumes first; images and weights stayed on the machine.
   none of 30 runs and all 30 answers were valid JSON; `repetition_penalty 1.1`
   also gave 0 loops but penalises the prompt's tokens too, `presence_penalty
   1.5` gave 2. The "Naive" level, which the acceptance test uses, answers in
-  seconds. Fix and a comparison of the levels: before stage 3.4 (open
-  questions in [DECISIONS.md](DECISIONS.md)).
+  seconds. Fixed in image `r3`: section 8.
+
+## 8. Chat modes and the images `r3` and `r4`
+
+Evidence for D19, collected 2026-10-12 … 13 and 2026-10-19 on the same DGX
+Spark with the stack installed in stage 3.3. Each fix was first applied to the
+running container (`build/ragflow/patch_*.py` run inside it, then a restart) —
+`r2` for the eight fixes that became `r3`, `r3` for the four that became `r4`;
+[tools/mode_eval.py](../tools/mode_eval.py) asks one chat the same questions
+at each reasoning level through the API.
+
+The published `r3` image predates two of D19's fixes: the Cyrillic keyword
+narrowing and the forced first `rag` call were written after it was built
+(13:59 against 12:12 on 2026-10-14), so in that image they are absent and have
+only ever run as a hot patch on the container. `r4` is the first image to carry
+all twelve. Checked by the patch markers of `build/ragflow/patch_*.py`: nine in
+the `r3` image against fifteen in the container the measurements below were
+taken on — and that container's fifteen are byte for byte the set the `r4`
+image carries, so these measurements describe `r4`.
+
+- **Helper-call loops.** The keyword request of the agentic pipeline as
+  RAGFlow sends it (temperature 0.1, no output limit), here capped at 800
+  tokens; 5 questions × 6, five at a time:
+
+  | Variant | Loops | Valid JSON | Normal answers, tokens | Time |
+  |---|---|---|---|---|
+  | as sent by RAGFlow | **9/30** | — | 60–704 | 134 s |
+  | `repetition_penalty 1.05` | 2/30 | — | 41–338 | 70 s |
+  | `presence_penalty 1.5` | 2/30 | 28/30 | 67–121 | 62 s |
+  | Qwen's advice: t 0.7, top_p 0.8, presence 1.5 | 1/30 | 29/30 | 66–187 | 56 s |
+  | `repetition_penalty 1.1` | 0/30 | 30/30 | 38–215 | 57 s |
+  | **`frequency_penalty 0.5`** | **0/30** | **30/30** | 59–126 | 41 s |
+
+  A loop repeats one word or phrase (`"серверная", "серверная", …`). Chosen:
+  `frequency_penalty`, which counts only the answer's own repetitions;
+  `repetition_penalty` also penalises the prompt's tokens. No variant produced
+  CJK characters.
+- **kNN filter.** "Когда проходят плановые работы?" against a document that
+  says "Плановое обслуживание проводится…": before the fix no candidates at
+  all in any setup, even at threshold 0; after it rank 1 in four setups of
+  five (all but reranker 0.3/0.2). On the stage 3.1 manual the totals of the
+  §4 matrix were unchanged in every setup: reranker 0.7/0.1 8/8 found, 2/2
+  rejected; without the reranker 8/8 and 0/2 as before.
+- **Medium's "no answer".** Log of one question: one passage found, review
+  verdict SUFFICIENT (confidence 0.95), then "No supporting evidence was
+  found; returning the configured empty response": the graph's `empty_result`
+  flag, set at the start, was never cleared.
+- **Reranker query.** With the reranker added to the agentic search, Low
+  dropped to 5/7: the search string was the question plus the generated
+  keywords (entity three times, English aliases), and the reranker scored that.
+  Searching with the question itself restored 7/7.
+- **Router.** Before the fix the outer model answered "Какая столица
+  Австралии?" itself in some runs, once "Канберра", once "Сидней"; after it
+  every run called `rag` and gave the "no answer" text.
+- **Acceptance sample**, 7 questions with answers and 1 without (sources and
+  no CJK required):
+
+  | Level | Image `r2` | All fixes | Median / max time |
+  |---|---|---|---|
+  | Naive | 6/7 · 1/1 | **7/7 · 1/1** | 3 s / 4 s |
+  | Low | hung in about half the questions | **7/7 · 1/1** | 15 s / 17 s |
+  | Medium | 0/7 · 1/1¹ | **7/7 · 1/1** | 52 s / 92 s |
+  | High | — | **7/7 · 1/1** | 47 s / 96 s |
+
+  ¹ measured with the helper-call fix only, so that it would not hang.
+- **Stage 3.1 manual**, 8 questions with answers and 2 without:
+
+  | Level | Facts | "No answer" | Median / max time |
+  |---|---|---|---|
+  | Naive | 8/8 | 2/2 | 3 s / 8 s |
+  | Low | 8/8 | 2/2 | 16 s / 20 s |
+  | Medium | 8/8 | 0/2² | 96 s / 132 s |
+
+  ² Medium found passages for both and wrote its own answer: "the documents
+  have no information on the price", and, from the specifications with
+  sources, "the board has no built-in Wi-Fi or Bluetooth", which is right for
+  this board.
+- **The four fixes of `r4`** (2026-10-19), the acceptance sample at every
+  level against the same run without them (2026-10-14). "Before" is the
+  container as it stood then — the `r3` image plus the three later edits noted
+  above:
+
+  | Level | Before | With the four fixes | Median / max time |
+  |---|---|---|---|
+  | Naive | 7/7 · 1/1 | **7/7 · 1/1** | 3 s / 4 s |
+  | Low | 7/7 · 1/1 | **7/7 · 1/1** | 16 s / 21 s |
+  | Medium | 6/7 · 1/1 | **7/7 · 1/1** | 56 s / 229 s |
+  | High | 5/7 · 1/1 | **7/7 · 1/1** | 57 s / 122 s |
+  | Ultra | 6/7 · 1/1 | **7/7 · 1/1** | 55 s / 100 s |
+
+  What each fix is worth, read off the logs of both runs:
+
+  - **Query language — the measured gain.** The planner now splits a Russian
+    question into Russian sub-questions: `['расписание резервного копирования
+    базы знаний', …]`, `['телефон дежурного администратора', …]`. Before the
+    fix they came out in English and matched nothing in a Russian corpus. This
+    is what recovered the Medium and High misses.
+  - **Claim shapes — defect proven, guard untriggered.** The server log holds
+    exactly one crash, and it is the Ultra miss above:
+    `AttributeError: 'str' object has no attribute 'get'` at
+    `sufficient_context.py:290`, `cid = str(item.get("claim_id") or "")`,
+    reached through `_bounded`, which handles only `TimeoutError`. On
+    2026-10-19 the model returned well-formed claim objects, so the new branch
+    never ran: the fix insures against a shape the model produces now and
+    then, and this run does not demonstrate it.
+  - **Research budget — headroom, not a fix.** The whole-graph ceiling was
+    never reached on 2026-10-19; the only budget warnings in the log are
+    per-call ones. Medium's slowest question took 229 s, which the former
+    180 s ceiling would have cut short, but on 2026-10-14 that same question
+    answered correctly in 92 s. The cost is the longer worst case in the table
+    above; no question in either run needed the extra time to be answered.
+- **Image `r3`:** nine of the fifteen patch markers — the Cyrillic keyword
+  narrowing and the forced first `rag` call are absent, so the image on its own
+  does not reproduce the results above ([BUILD.md](BUILD.md)).
+- **Image `r4`:** all fifteen markers plus the two prompt rules that carry
+  none, byte for byte the set measured above, and `_TOTAL_BUDGET_S` reading
+  `RAGSPARK_AGENTIC_BUDGET_S` ([BUILD.md](BUILD.md)).

@@ -205,7 +205,7 @@ services:
 
   ragflow:
     <<: *restart
-    image: ghcr.io/0ffch41n/ragspark-ragflow:0.27.2-arm64-r2@sha256:4232ddbb513cff48c51864f081f6b82d37371927dea70bb01a200c6994f70dcc
+    image: ghcr.io/0ffch41n/ragspark-ragflow:0.27.2-arm64-r4@sha256:1ed7725f5932a4799591104b5efd1d1ed7f50984e070be24ed4251d27341e0f8
     logging: *logging
     hostname: ragflow                  # stable task-executor id across re-creation
     command:                           # as in RAGFlow 0.27.2's compose

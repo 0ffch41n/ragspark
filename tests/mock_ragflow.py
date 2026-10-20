@@ -24,6 +24,8 @@ class State:
         self.datasets, self.docs, self.chats = {}, {}, {}
         self.polls = 0
         self.log = []
+        self.levels = []            # reasoning level of every chat completion
+        self.deleted_sessions = []
 
 
 def make_handler(state):
@@ -83,7 +85,7 @@ def make_handler(state):
                     for ds in b.get("dataset_ids", []):
                         if not any(d["chunk_count"] for d in state.docs.values() if d["dataset_id"] == ds):
                             return self.send({"code": 102, "message": "The dataset %s doesn't own parsed file" % ds})
-                    if b.get("tenant_rerank_id") != "m-rerank":
+                    if b.get("dataset_ids") and b.get("tenant_rerank_id") != "m-rerank":
                         return self.send({"code": 102, "message": "`tenant_rerank_id` must be a valid tenant model id"})
                     cid = uuid.uuid4().hex
                     chat = dict(b, id=cid, rerank_id="BAAI/bge-reranker-v2-m3@ragspark-rerank@VLLM")
@@ -124,15 +126,22 @@ def make_handler(state):
             if re.match(r"^/api/v1/datasets/\w+/documents/\w+/chunks$", p) and method == "GET":
                 chunks = [{"content": SAMPLE_TEXT[:80]}, {"content": SAMPLE_TEXT[80:]}]
                 return self.ok({"total": 2, "chunks": chunks if (q.get("page") or ["1"])[0] == "1" else []})
+            m = re.match(r"^/api/v1/chats/(\w+)/sessions$", p)
+            if m and method == "DELETE":
+                state.deleted_sessions += json.loads(raw)["ids"]
+                return self.ok({})
             if p == "/api/v1/chat/completions" and method == "POST":
                 b = json.loads(raw)
                 chat = state.chats[b["chat_id"]]
                 question = b["question"]
+                state.levels.append(b.get("reasoning"))
                 ref = {"chunks": [{"content": SAMPLE_TEXT, "document_name": "sample-ru.pdf"}], "doc_aggs": []}
+                if not chat.get("dataset_ids"):                       # chat without a knowledge base
+                    return self.ok({"answer": "17 × 3 = 51.", "reference": {}, "session_id": "s%d" % len(state.levels)})
                 if "Австрал" in question:
                     if state.mode == "leak":
                         return self.ok({"answer": "Столица Австралии — Канберра.", "reference": ref})
-                    return self.ok({"answer": chat["prompt_config"]["empty_response"],
+                    return self.ok({"answer": chat["prompt_config"]["empty_response"], "session_id": "s%d" % len(state.levels),
                                     "reference": {"chunks": [], "doc_aggs": []}})
                 if "резерв" in question.lower():
                     answer = "Резервная копия создаётся каждую среду в 02:30 [ID:0]."
@@ -140,7 +149,10 @@ def make_handler(state):
                     answer = "Не выше 27 °C [ID:0]."
                 if state.mode == "cjk":
                     answer += " 相关信息"
-                return self.ok({"answer": answer, "reference": ref})
+                if b.get("reasoning") == 1:
+                    answer = ("<think>Running the rag tool...<br>[Hybrid search] Kept 2 of 2 passage(s)."
+                              "</think>" + answer)
+                return self.ok({"answer": answer, "reference": ref, "session_id": "s%d" % len(state.levels)})
             self.send({"code": 404, "message": "mock: no route %s %s" % (method, p)}, 404)
 
         def do_GET(self):
