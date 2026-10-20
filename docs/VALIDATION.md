@@ -8,7 +8,8 @@ Spark (GB10, DGX OS 7.5.0, driver 580.178.04, CUDA 13.0) with RAGFlow's own
 compose, the RAGSpark image `0.27.2-arm64-r1` and three vLLM containers on the
 same Docker network. Section 6 is stage 3.2, RAGSpark's own compose (D17);
 section 7 is stage 3.3, the installer (D18); section 8 is the chat modes and
-the image `r3` (D19).
+the images `r3` and `r4` (D19); section 9 is stage 3.4, a clean install from a
+fresh clone (D18).
 Numbers can be reproduced with the scripts in [tools/](../tools/).
 
 ## 1. LLM serving — Qwen 3.8 27B NVFP4
@@ -346,3 +347,59 @@ image carries, so these measurements describe `r4`.
 - **Image `r4`:** all fifteen markers plus the two prompt rules that carry
   none, byte for byte the set measured above, and `_TOTAL_BUDGET_S` reading
   `RAGSPARK_AGENTIC_BUDGET_S` ([BUILD.md](BUILD.md)).
+
+## 9. Clean install (stage 3.4)
+
+Evidence that what GitHub ships installs from zero and reproduces the numbers
+of section 8, collected 2026-10-20 on the same DGX Spark. That machine had been
+patched by hand for two days while section 8 was measured, so it was wiped
+first: `sudo ragspark uninstall --keep-models` removed eight containers, six
+volumes, the network, the unit, the command and `/opt/ragspark`, and kept the
+29 GB of model weights. The locally built image was deleted with its tag as
+well, so the installation had to fetch one from the registry.
+
+- **The clone is self-sufficient.** A `git clone` of `main` at `0da23d3`
+  carries all five patch scripts that `build/ragflow/build.sh` calls, plus
+  `install.sh`, `tools/mode_eval.py` and `tools/acceptance.py`, and its
+  `compose/compose.yaml` pins `r4` by digest. Before that commit three of the
+  five scripts were untracked, so a clone could not have built the image at
+  all.
+- **The installer's own tests pass from the clone**: 23 of 23 in 33 s
+  (`python3 -m unittest discover -s tests` with `RAGSPARK_TEST_COMPOSE` set).
+  They run the whole installation against fake `docker`, `systemctl` and
+  `nvidia-smi` and a mock RAGFlow API.
+- **The installation** — `sudo ./install.sh --yes --lang ru` from a fresh
+  clone — brought all eight containers up healthy in 9.4 min, registered the
+  three models and set them as the defaults, and ended with the acceptance
+  test passing in 29 s: the sample PDF parsed in 7 s into 2 chunks with a
+  **Cyrillic share of 0.992** against the 0.80 minimum, both fact questions
+  answered with a citation, the question the document does not answer refused,
+  one Low-level agentic answer in 16 s, and the chat without a knowledge base
+  answering 17 × 3.
+- **The image came from GHCR.** The running container's image carries no tag
+  at all, only `ghcr.io/0ffch41n/ragspark-ragflow@sha256:1ed7725f…`, which is
+  what a pull by digest leaves behind — the locally built copy had been
+  deleted with its tag before the install. Its fifteen patch markers therefore
+  come from the image, not from a hot patch.
+- **The chat modes, measured again on this installation** with
+  `tools/mode_eval.py` from the clone, against section 8's run on the
+  hand-patched machine:
+
+  | Level | Section 8 | Clean install | Median / max time |
+  |---|---|---|---|
+  | Naive | 7/7 · 1/1 | **7/7 · 1/1** | 3 s / 4 s |
+  | Low | 7/7 · 1/1 | **7/7 · 1/1** | 15 s / 20 s |
+  | Medium | 7/7 · 1/1 | **7/7 · 1/1** | 62 s / 127 s |
+  | High | 7/7 · 1/1 | **7/7 · 1/1** | 51 s / 151 s |
+  | Ultra | 7/7 · 1/1 | **7/7 · 1/1** | 47 s / 127 s |
+
+  Correctness is identical at every level, with no failures. The times move
+  within the usual spread, and section 8's one outlier did not recur: Medium's
+  slowest question took 127 s here against 229 s there, so that 229 s was
+  noise rather than a consequence of the larger research budget.
+- **Behaviour worth knowing**, both scored correct. Ultra prefaced its answer
+  about the number of backups with "the knowledge base does not have enough
+  information for a complete answer" and then gave the right figure; High
+  answered the same question by leading with where the backups are kept rather
+  than how many. This is the D19 note about the agentic levels writing their
+  own answers.

@@ -5,7 +5,7 @@
 [Русская версия](README.ru.md)
 
 > **Status: pre-alpha.** The project is being built in public. The installer
-> works on DGX Spark (stage 3.3), but expect changes, and do not use it on a
+> works on DGX Spark (stage 3.4), but expect changes, and do not use it on a
 > machine whose data you need. See the roadmap below.
 
 ## What it is
@@ -71,11 +71,11 @@ fast classic mode. The measurements are in
 
 - [x] **Stage 1** — decisions and compatibility review ([docs/DECISIONS.md](docs/DECISIONS.md))
 - [x] **Stage 2** — RAGFlow 0.27.2 arm64 image ([docs/BUILD.md](docs/BUILD.md))
-- [ ] **Stage 3** — `single` mode: install, automatic model setup, built-in acceptance test
+- [x] **Stage 3** — `single` mode: install, automatic model setup, built-in acceptance test
   - [x] 3.1 — end-to-end validation on a test stack ([docs/VALIDATION.md](docs/VALIDATION.md), [tools](docs/TOOLS.md))
   - [x] 3.2 — RAGSpark compose ([docs/COMPOSE.md](docs/COMPOSE.md))
   - [x] 3.3 — installer ([docs/INSTALL.md](docs/INSTALL.md))
-  - [ ] 3.4 — clean install
+  - [x] 3.4 — clean install ([docs/VALIDATION.md](docs/VALIDATION.md), §9)
 - [ ] **Stage 4** — model catalog beyond the defaults
 - [ ] **Stage 5** — `stack` mode on two DGX Spark units
 - [ ] **Stage 6** — backups, optional monitoring, offline bundle

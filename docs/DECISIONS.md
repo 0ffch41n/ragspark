@@ -400,6 +400,11 @@ re-check them before any version bump.
   started the stack in order in about 7 min; `stop` / `start` in 6.2 min. The
   offline weights check was rewritten after it asked the network for files
   vLLM does not need. Details: [VALIDATION.md](VALIDATION.md), section 7.
+- **Verified again (2026-10-20), stage 3.4:** an installation from zero on a
+  wiped machine, out of a fresh clone of `main`, with the image pulled from
+  GHCR by digest — stack in 9.4 min, acceptance test passed in 29 s, and the
+  chat modes reproduced section 8's results at every level. Details:
+  [VALIDATION.md](VALIDATION.md), section 9.
 
 ## D19. Chat modes — Naive by default, agentic levels made to work
 
