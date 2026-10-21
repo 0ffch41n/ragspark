@@ -10,7 +10,8 @@ upstream.
 
 | Tag | Digest | Patches | Status |
 |---|---|---|---|
-| `0.27.2-arm64-r4` | `sha256:1ed7725f5932a4799591104b5efd1d1ed7f50984e070be24ed4251d27341e0f8` | + research budget, query language, claim shapes | current |
+| `0.27.2-arm64-r5` | `sha256:a34a9f1f1009442497f50da91691edbc1dc19dea4cea7a73c9673a0000f61375` | + scans: Cyrillic text layer, vision at temperature 0, whole tables | current |
+| `0.27.2-arm64-r4` | `sha256:1ed7725f5932a4799591104b5efd1d1ed7f50984e070be24ed4251d27341e0f8` | + research budget, query language, claim shapes | superseded |
 | `0.27.2-arm64-r3` | `sha256:8d08d824a9b248fceba8a0c5885aaf3cef7f24c7137ec87154aef53031c22e5a` | + kNN filter, agentic pipeline, Naive by default — two of them absent, see below | superseded |
 | `0.27.2-arm64-r2` | `sha256:4232ddbb513cff48c51864f081f6b82d37371927dea70bb01a200c6994f70dcc` | Chrome + reranker input | superseded |
 | `0.27.2-arm64-r1` | `sha256:1bf5fc0031bff2d775dc8bc1626b2820f9b658b43696a9bb4bdc02a8304f0660` | Chrome | superseded |
@@ -18,8 +19,23 @@ upstream.
 Current image:
 
 ```bash
-docker pull ghcr.io/0ffch41n/ragspark-ragflow:0.27.2-arm64-r4@sha256:1ed7725f5932a4799591104b5efd1d1ed7f50984e070be24ed4251d27341e0f8
+docker pull ghcr.io/0ffch41n/ragspark-ragflow:0.27.2-arm64-r5@sha256:a34a9f1f1009442497f50da91691edbc1dc19dea4cea7a73c9673a0000f61375
 ```
+
+`r5` was built and pushed on 2026-10-20 on a DGX Spark. Verified by comparing
+it with `r4` file by file: of the 1947 files under `/ragflow` outside `.venv`,
+exactly three differ — `deepdoc/parser/pdf_parser.py`, `rag/llm/cv_model.py`
+and `rag/nlp/__init__.py`, the files of `build/ragflow/patch_scans.py` — and
+`.venv` is the same. So `r5` carries everything `r4` does unchanged (the fifteen
+markers, the two prompt rules without one, the research budget) plus the three
+markers of `patch_scans.py`. Those three files are byte for byte the ones in the
+container the scans were measured on, so the measurements in
+[VALIDATION.md](VALIDATION.md), §10 — the scan 8/8 through vision, the digital
+manual unchanged — describe this image. When this was written the stack was
+still running the hot-patched `r4` container; recreating it on `r5` replaces
+those hot patches with the same code baked into the image. Build inputs, from
+the build log: the same `ubuntu:24.04` and `infiniflow/ragflow_deps:latest`
+digests as `r4`.
 
 `r4` was built and pushed on 2026-10-19 on a DGX Spark. Verified by inspecting
 the image itself: it carries all fifteen patch markers of
@@ -44,7 +60,7 @@ image was built at 12:12, before the last three edits of
 the fifteen markers and lacks the Cyrillic keyword narrowing and the forced
 first `rag` call. Those two only ever ran as a hot patch on the container, and
 the chat-mode measurements of 2026-10-14 were taken with them applied. `r4` is
-the first image to carry them — use `r4`.
+the first image to carry them.
 
 `r2` was verified on 2026-10-08 on a DGX Spark: the patch marker is present in
 `/ragflow/rag/nlp/search.py`, the model check passed on the test stack, and the
@@ -82,13 +98,13 @@ The script:
 1. clones RAGFlow at tag `v0.27.2` and **verifies the commit**
    (`a024bea0…`) — if the tag ever moves, it stops;
 2. resets the patched files to upstream and applies the RAGSpark patches;
-3. builds `ghcr.io/0ffch41n/ragspark-ragflow:0.27.2-arm64-r4` with OCI labels
+3. builds `ghcr.io/0ffch41n/ragspark-ragflow:0.27.2-arm64-r5` with OCI labels
    (source, version, upstream commit, license);
 4. with `--push`, pushes the image to GHCR.
 
 ## Differences from upstream
 
-Five, each applied by a script that stops the build if the code it expects is
+Six, each applied by a script that stops the build if the code it expects is
 not there (for example after a RAGFlow version change):
 
 1. [patch_dockerfile.py](../build/ragflow/patch_dockerfile.py) — the Chrome and
@@ -104,13 +120,21 @@ not there (for example after a RAGFlow version change):
    no longer requires a word match: the full-text query stops being the kNN
    filter, through RAGFlow's own (commented-out) function for that. A question
    worded unlike the document found nothing before. §8.
-4. [patch_agentic.py](../build/ragflow/patch_agentic.py) — six fixes to the
+4. [patch_agentic.py](../build/ragflow/patch_agentic.py) — twelve fixes to the
    agentic chat pipeline (reasoning levels Low … Ultra): finite helper calls,
    the stale "nothing found" flag, the reranker in agentic search and what it
    scores, answers only through `rag` in document chats, no internal notes in
-   answers. D19 in [DECISIONS.md](DECISIONS.md), §8.
+   answers, no keyword narrowing for Cyrillic, a first `rag` call that is not
+   skipped, a research budget that fits this hardware, search queries in the
+   question's language, and a review that survives malformed claims. D19 in
+   [DECISIONS.md](DECISIONS.md), §8.
 5. [patch_web_default.py](../build/ragflow/patch_web_default.py) — the chat
    input starts at the "Naive" level instead of "Low".
+6. [patch_scans.py](../build/ragflow/patch_scans.py) — scanned and Russian
+   PDFs: DeepDOC counts Cyrillic as text before it discards a page's text
+   layer; vision calls run at temperature 0 (`RAGSPARK_VISION_TEMPERATURE`)
+   instead of the chat's sampling; and the chunker keeps every markdown table
+   whole, with its title. D14 in [DECISIONS.md](DECISIONS.md), §10.
 
 ## Expected warnings
 

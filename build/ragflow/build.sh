@@ -11,9 +11,10 @@ set -euo pipefail
 RAGFLOW_REPO="https://github.com/infiniflow/ragflow.git"
 RAGFLOW_TAG="v0.27.2"
 RAGFLOW_COMMIT="a024bea0cd93f39e6652a42bf84dd20c55bc560b"
-REVISION="r4"   # bump whenever the RAGSpark patch set changes (r1: Chrome; r2: + reranker input;
+REVISION="r5"   # bump whenever the RAGSpark patch set changes (r1: Chrome; r2: + reranker input;
                 # r3: + kNN filter, agentic pipeline, Naive by default;
-                # r4: + research budget, query language, claim shapes)
+                # r4: + research budget, query language, claim shapes;
+                # r5: + scans: Cyrillic text layer, vision at temperature 0, whole tables)
 IMAGE="ghcr.io/0ffch41n/ragspark-ragflow"
 TAG="${RAGFLOW_TAG#v}-arm64-${REVISION}"
 WORKDIR="${RAGSPARK_BUILD_DIR:-/var/tmp/ragspark-build}"
@@ -52,11 +53,13 @@ git -C "$src" checkout --quiet -- Dockerfile rag/nlp/search.py rag/utils/es_conn
     rag/advanced_rag/harness/tools/search.py rag/advanced_rag/harness/tools/text_processing.py \
     rag/advanced_rag/harness/orchestrator/sufficient_context.py \
     rag/prompts/action_initialize_state.md rag/prompts/sca_query_rewrite.md \
+    deepdoc/parser/pdf_parser.py rag/llm/cv_model.py rag/nlp/__init__.py \
     rag/llm/chat_model.py api/db/services/dialog_service.py web/src/utils/authorization-util.ts
 python3 "$HERE/patch_dockerfile.py" "$src/Dockerfile"
 python3 "$HERE/patch_search.py" "$src/rag/nlp/search.py"
 python3 "$HERE/patch_knn_filter.py" "$src"
 python3 "$HERE/patch_agentic.py" "$src"
+python3 "$HERE/patch_scans.py" "$src"
 python3 "$HERE/patch_web_default.py" "$src"
 
 echo "build: building $IMAGE:$TAG"

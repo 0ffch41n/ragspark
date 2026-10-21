@@ -9,7 +9,7 @@ compose, the RAGSpark image `0.27.2-arm64-r1` and three vLLM containers on the
 same Docker network. Section 6 is stage 3.2, RAGSpark's own compose (D17);
 section 7 is stage 3.3, the installer (D18); section 8 is the chat modes and
 the images `r3` and `r4` (D19); section 9 is stage 3.4, a clean install from a
-fresh clone (D18).
+fresh clone (D18); section 10 is scanned documents (D14).
 Numbers can be reproduced with the scripts in [tools/](../tools/).
 
 ## 1. LLM serving — Qwen 3.8 27B NVFP4
@@ -403,3 +403,79 @@ well, so the installation had to fetch one from the registry.
   answered the same question by leading with where the backups are kept rather
   than how many. This is the D19 note about the agentic levels writing their
   own answers.
+
+## 10. Scanned documents
+
+Evidence for the scan part of D14, collected 2026-10-20 on the clean install of
+section 9 (`r4`), with the three fixes of `build/ragflow/patch_scans.py` applied
+to the running container one by one. The test document is the stage 3.1 manual
+turned into a scan: every page rendered at 150 dpi in greyscale, slightly
+blurred and saved as JPEG at quality 70, so the PDF carries no text layer at
+all. Measured with [tools/rag_eval.py](../tools/rag_eval.py) and its MSI
+question set; "vision" is the running Qwen 3.8 27B registered a second time as
+a vision model — no other model is loaded.
+
+- **Why DeepDOC cannot read Russian.** Two causes, both in code. The dictionary
+  of its recogniser (`rag/res/deepdoc/ocr.res`) has 6623 entries: 6277 CJK and
+  one of the 33 lowercase Russian letters. And `_is_garbled_by_font_encoding`
+  in `deepdoc/parser/pdf_parser.py` clears a page's text layer when at least
+  30% of its characters come from subset fonts and
+  `cjk_ratio < 0.05 and punct_ratio > 0.4`; Cyrillic is counted in neither
+  ratio, so on a Russian page only the punctuation decides. On the digital
+  manual it cleared pages 1–2, the table of contents (69% and 85% dots), and
+  recognised them as images. With Cyrillic counted as text (fix 1) those pages
+  keep their layer: garbled words 194 → 164, Cyrillic share 0.665 → 0.679. The
+  other 85% of the garbage comes from regions DeepDOC always recognises — BIOS
+  screenshots — which no text layer can save.
+- **The scan through each parser:**
+
+  | Parser | Time | Chunks | Cyrillic | Garbled words | Found (rr .7/.1) | No-answer rejected |
+  |---|---|---|---|---|---|---|
+  | Plain Text | 3 s | 0 | 0.000 | 0 | 0/8 | —¹ |
+  | DeepDOC | 145 s | 89 | 0.000 | 1066 | 0/8 | —¹ |
+  | vision, as shipped | 675 s | 39 | 0.823 | 1 | 7/8 | 2/2 |
+  | vision, temperature 0 (fix 2) | 675 s | 40 | 0.818 | 2 | 7/8 | 2/2 |
+  | **vision, temperature 0, whole tables (fixes 2–3)** | 674 s | 43 | **0.818** | **2** | **8/8** | **2/2** |
+  | *digital manual, Plain Text, all fixes, for reference* | 6 s | 41 | 0.835 | 0 | 8/8 | 2/2 |
+
+  ¹ nothing passes the threshold for any question, so "rejected" means nothing.
+
+  The garbled words left are two words with a Latin letter inside
+  (`Видеокarta`, `брackete`); `rag_eval` counts only mixed-script words, and a
+  few `Г6/c` for «Гб/с» and one `Khonka` for «Кнопка» also occur on this
+  deliberately poor scan.
+- **Temperature (fix 2).** RAGFlow sends vision calls without sampling
+  parameters (`describe_with_prompt` in `rag/llm/cv_model.py`; `extra_body` is
+  None for `OpenAI_APICV`), so vLLM applies the LLM's chat default, temperature
+  0.7. Page 10 of the scan, five runs each, through RAGFlow's own code path:
+
+  | Temperature | Distinct outputs | LAN table transcribed | Runaways | Time |
+  |---|---|---|---|---|
+  | 0.7 (as shipped) | 5 of 5 | 5 of 5 | 0 | 21.5 s |
+  | 0 | **1 of 5** | 5 of 5 | 0 | 22.0 s |
+  | 0.2 | 4 of 5 | 5 of 5 | 0 | 22.1 s |
+
+  On a re-rendered copy of the same page the 0.7 default replaced the LAN and
+  audio tables with image placeholders on one try of three, and the indexed
+  chunk lost «Оранжевый — 1 Гбит/с»; at 0 the output was byte-identical every
+  time and kept both tables. The three parses of the whole scan at 0 (two chunk
+  sizes, then fix 3) gave the same Cyrillic share and the same garbled words.
+- **Tables (fix 3).** `naive_merge` in `rag/nlp/__init__.py` splits text on
+  the delimiter, which includes the newline, and packs the lines greedily up to
+  `chunk_token_num`; it has no notion of a table. The one miss above —
+  «Что означает оранжевый индикатор скорости на порту LAN?» — was a table cut
+  at the budget: its rows landed in a chunk without the title and the header
+  row. Reranker scores against that question: those rows 0.014, the bare answer
+  lines 0.009, the same page with the table intact 0.544 — the threshold needs
+  about 0.11. A 1024-token chunk gave the same 7/8: a larger budget only moved
+  the cut two rows down. On the recognised text of the whole scan the fix took
+  torn tables from 7 to 0, and text without tables was chunked byte for byte as
+  before. After it the question ranks #1 in all five setups.
+- **Digital PDFs unchanged.** The digital manual through Plain Text with all
+  three fixes: 8/8, 2/2, Cyrillic 0.835, as in stage 3.1, and none of its 41
+  chunks contains a `|`, so the table fix never runs on that path.
+- **Image `r5`:** differs from `r4` in exactly the three files of
+  `patch_scans.py`, and those are byte for byte the files of the container
+  measured above ([BUILD.md](BUILD.md)).
+- **Not covered yet:** a real scan with skew and paper noise; cells made of
+  symbols only (● matrices) carry small errors at any temperature.

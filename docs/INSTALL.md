@@ -169,6 +169,12 @@ New knowledge bases for Russian documents: language *Russian*, PDF parser
 *Plain Text* (D14 in [DECISIONS.md](DECISIONS.md)). The models are already
 the defaults.
 
+For **scanned** PDFs — documents without a text layer — choose the vision model
+`qwen3.8-27b` (instance `ragspark-vision`) as the PDF parser instead. It reads
+every page as an image with the chat's own LLM: about 17 s a page, and chat
+answers are slower while it indexes. Keep *Plain Text* for every PDF that has
+a text layer: it is faster and reads the text exactly.
+
 ### Reasoning levels
 
 The selector under the chat input sets how the chat looks for the answer. It
@@ -179,7 +185,7 @@ starts at "Naive"; the browser remembers the choice.
 | Naive | one search with the chat's settings and one answer; if nothing passes the threshold, the chat's "no answer" text | 3–8 s |
 | Low | RAGFlow's agentic pipeline: keywords from the question, a search, a check of the result | 15–20 s |
 | Medium, High | the same with more searches, drafts and a review of whether the evidence is enough | about 1–2 min |
-| Ultra | the most rounds | not measured yet |
+| Ultra | the most rounds | about 1–2 min |
 
 ¹ DGX Spark with the default model, on RAGSpark's question sets
 ([VALIDATION.md](VALIDATION.md), section 8).

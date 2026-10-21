@@ -47,3 +47,4 @@ services:
       RAGSPARK_LLM_NAME: qwen3.8-27b
       RAGSPARK_LLM_CONTEXT: "65536"
       RAGSPARK_LLM_TOOLS: "1"
+      RAGSPARK_LLM_VISION: "1"          # vision tower in the checkpoint, vLLM serves images: parses scans

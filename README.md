@@ -65,7 +65,8 @@ RAGSpark changes them — PDFs are read from their text layer, and retrieval
 relies on the reranker. RAGFlow's agentic chat modes (Low … Ultra) failed on
 Russian documents and are fixed in RAGSpark's image; the chat starts in the
 fast classic mode. The measurements are in
-[docs/VALIDATION.md](docs/VALIDATION.md). Scanned PDFs are not supported yet.
+[docs/VALIDATION.md](docs/VALIDATION.md). Scanned PDFs are read through the
+LLM's own vision, about 17 s a page.
 
 ## Roadmap
 

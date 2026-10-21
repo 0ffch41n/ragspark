@@ -47,10 +47,12 @@ re-check them before any version bump.
   emulation), slim edition (no bundled embedding models — vLLM provides them),
   publish to GHCR as `ghcr.io/0ffch41n/ragspark-ragflow`, reference by digest.
   Recipe: [BUILD.md](BUILD.md).
-- **Published:** `0.27.2-arm64-r4` (2026-10-19),
+- **Published:** `0.27.2-arm64-r5` (2026-10-20),
+  `sha256:a34a9f1f1009442497f50da91691edbc1dc19dea4cea7a73c9673a0000f61375`,
+  the first image with all patches below. It replaces `0.27.2-arm64-r4`
+  (2026-10-19,
   `sha256:1ed7725f5932a4799591104b5efd1d1ed7f50984e070be24ed4251d27341e0f8`,
-  the first image with all patches below. It replaces `0.27.2-arm64-r3`
-  (2026-10-14,
+  patches 1–5), `0.27.2-arm64-r3` (2026-10-14,
   `sha256:8d08d824a9b248fceba8a0c5885aaf3cef7f24c7137ec87154aef53031c22e5a`,
   built before the last three edits of patch 4 and missing two of its fixes —
   see [BUILD.md](BUILD.md)), `0.27.2-arm64-r2` (2026-10-08,
@@ -58,7 +60,7 @@ re-check them before any version bump.
   patches 1–2) and `0.27.2-arm64-r1` (2026-10-01,
   `sha256:1bf5fc0031bff2d775dc8bc1626b2820f9b658b43696a9bb4bdc02a8304f0660`,
   patch 1).
-- **Deviations from upstream** — five, each applied by a script that refuses
+- **Deviations from upstream** — six, each applied by a script that refuses
   to run if the code it expects is not there:
   1. The Chrome/ChromeDriver steps run on x86_64 only: the archives in
      `ragflow_deps` are x86 builds that cannot run on arm64. Browser-driven
@@ -77,6 +79,9 @@ re-check them before any version bump.
   4. Twelve fixes to the agentic chat pipeline (`r3`, `r4`), D19.
   5. The chat input starts at the "Naive" reasoning level instead of "Low"
      (`r3`), D19.
+  6. Three fixes that let scanned and Russian PDFs be read (`r5`), D14: DeepDOC
+     keeps a Russian page's text layer, vision calls run at temperature 0, and
+     the chunker never splits a markdown table.
 - **Verified (2026-10-01):** the unmodified upstream build completed on a DGX
   Spark; with RAGFlow's own compose, the server reported `v0.27.2`, served the
   web UI, and Elasticsearch, MySQL, Valkey and the object store were healthy.
@@ -223,27 +228,50 @@ re-check them before any version bump.
     uninstall;
   - RAGSpark's own images live on GHCR.
 
-## D14. Document parsing — plain text layer for PDF
+## D14. Document parsing — the PDF text layer, vision for scans
 
 - **What:** how PDFs become text before chunking.
 - **Decision:** PDF parser **Naive** (the PDF's own text layer, labelled
-  "Plain Text" in the code). DeepDOC is not used for Russian documents.
-- **Why:** DeepDOC's OCR model recognises CJK and Latin only, so Cyrillic comes
-  out as Latin look-alikes (`Pa3beM` for «Разъем»). DeepDOC also discards the
-  text layer of a whole page when more than 40% of its characters are ASCII
-  punctuation from embedded subset fonts — table-of-contents dot leaders
-  trigger it — and then OCRs the page. On a 39-page Russian manual:
+  "Plain Text" in the code) for PDFs that have one. A **scanned** PDF has no
+  text layer; its parser is the LLM's own vision — the running Qwen 3.8 is
+  registered a second time as the vision model `ragspark-vision` (`r5`).
+  DeepDOC is not used for Russian documents.
+- **Why:** DeepDOC's recogniser cannot output Russian: its dictionary
+  (`rag/res/deepdoc/ocr.res`) has 6623 entries, 6277 of them CJK and one of the
+  33 lowercase Russian letters, so Cyrillic comes out as Latin look-alikes
+  (`Pa3beM` for «Разъем»). DeepDOC also discards the text layer of a whole page
+  when more than 40% of its characters are ASCII punctuation from embedded
+  subset fonts — table-of-contents dot leaders trigger it — and then
+  recognises the page. On a 39-page Russian manual:
 
   | Parser | Cyrillic share | Garbled words | Questions found |
   |---|---|---|---|
   | DeepDOC | 0.665 | 194 | 4 of 8 |
   | Naive | **0.835** (= text layer) | **0** | 5 of 8 → 8 of 8 with D15 |
 
+- **Scans:** the same manual turned into a scan (every page an image, no text
+  layer), measured with [tools/rag_eval.py](../tools/rag_eval.py):
+
+  | Parser | Cyrillic share | Garbled words | Questions found | No-answer rejected |
+  |---|---|---|---|---|
+  | Naive | 0.000 (no text layer) | 0 | 0 of 8 | — |
+  | DeepDOC | 0.000 | 1066 | 0 of 8 | — |
+  | vision, `r5` | **0.818** | **2** | **8 of 8** | **2 of 2** |
+
+  Vision needed three fixes in RAGFlow, all in `patch_scans.py` (D3, deviation
+  6): DeepDOC counts Cyrillic as text when it judges a page garbled; vision
+  calls run at temperature 0 — at the chat's 0.7 the same page gave a different
+  transcription every time and sometimes replaced its tables with image
+  placeholders; and the chunker keeps a markdown table and its title in one
+  chunk — it used to cut tables at the token budget, and rows without their
+  header could not be found. Details: [VALIDATION.md](VALIDATION.md), section 10.
 - **Trade-offs:** Naive flattens tables into lines (still readable, retrieval
-  works) and cannot read scans.
-- **Open:** scanned Russian documents need another parser — Qwen 3.8 as a
-  vision model, or Docling — measured with
-  [tools/rag_eval.py](../tools/rag_eval.py) before a choice is made.
+  works) and cannot read scans. Vision reads about 17 s a page (the manual took
+  11 min against 6 s for its text layer) and shares the LLM with chat while it
+  indexes; cells made of symbols only (● matrices) carry small errors, and
+  screenshots inside a page may become image placeholders.
+- **Open:** measured on a scan made from a digital PDF (150 dpi, greyscale,
+  JPEG); a real scan with skew and paper noise is still to be measured.
 
 ## D15. Retrieval defaults — reranker, vector weight 0.7, threshold 0.1
 
@@ -478,7 +506,8 @@ re-check them before any version bump.
 
 ## Open questions
 
-- **Scanned documents.** See D14.
+- **Scanned documents.** Read through vision since `r5` (D14), but measured on a
+  scan made from a digital PDF only; a real scan is still to be measured.
 - **Glued lines.** When RAGFlow merges lines of a DOCX into a chunk it adds no
   separator (`GPUКритерий`, `скоростьsudo` — 11 places in a short document),
   which hurts keyword search.

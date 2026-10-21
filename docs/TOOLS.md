@@ -29,7 +29,11 @@ sudo docker compose exec -T ragflow \
 
 The LLM entry comes from `RAGSPARK_LLM_NAME`, `RAGSPARK_LLM_CONTEXT` and
 `RAGSPARK_LLM_TOOLS`, which the selected LLM file sets for the RAGFlow
-service; `--spec FILE` replaces the whole list.
+service; `--spec FILE` replaces the whole list. When the LLM file also sets
+`RAGSPARK_LLM_VISION=1`, the same model is registered a second time, as the
+vision model `ragspark-vision` used to parse scanned PDFs. It is not made the
+default vision model — RAGFlow would then describe figures with it in every
+upload; a spec entry with `"default": false` behaves the same way.
 
 | Status | Meaning |
 |---|---|

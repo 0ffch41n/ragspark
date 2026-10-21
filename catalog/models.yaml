@@ -58,6 +58,7 @@ models:
       context:
         default: 65536
       tool_calling: true
+      vision: true                      # vision tower in the checkpoint, vLLM serves images; parses scans as ragspark-vision (D14)
       serving_verified: "2026-10-02 DGX OS 7.5.0, driver 580.178.04, CUDA 13.0"
       measured:
         decode_tok_s_single: 17.1       # MTP 3; 10.2 without MTP; 19-21 on answers from context

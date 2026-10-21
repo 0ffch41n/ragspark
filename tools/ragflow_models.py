@@ -13,7 +13,9 @@ encryption and needs nothing on the host. From the compose/ directory:
 Existing instances are never modified; a mismatch is reported instead.
 Everything comes from the container environment (compose/.env and the LLM
 file): the superuser DEFAULT_SUPERUSER_EMAIL / ADMIN_DEFAULT_PASSWORD, and
-the LLM RAGSPARK_LLM_NAME, RAGSPARK_LLM_CONTEXT, RAGSPARK_LLM_TOOLS.
+the LLM RAGSPARK_LLM_NAME, RAGSPARK_LLM_CONTEXT, RAGSPARK_LLM_TOOLS and
+RAGSPARK_LLM_VISION. A spec entry with "default": false is registered but
+never made the default model of its type.
 Request formats were captured from RAGFlow 0.27.2.
 """
 import argparse, base64, http.cookiejar, json, os, sys, urllib.error, urllib.parse, urllib.request
@@ -30,6 +32,18 @@ DEFAULT_SPEC = [
     {"instance": "ragspark-rerank", "base_url": "http://vllm-rerank:8000/v1",
      "model": "BAAI/bge-reranker-v2-m3", "type": "rerank", "max_tokens": 8192, "is_tools": False},
 ]
+# An LLM file sets RAGSPARK_LLM_VISION=1 when its checkpoint has a vision tower and
+# vLLM serves image input. The same served model is then registered a second time,
+# as a vision model, for parsing scanned PDFs: a dataset's PDF parser (layout
+# recognizer) "<model>@ragspark-vision@VLLM". It is deliberately not the default
+# vision model: rag/app/naive.py uses the tenant's default vision model to describe
+# figures in every DeepDOC parse, which would slow down every upload.
+if os.environ.get("RAGSPARK_LLM_VISION", "0") == "1":
+    DEFAULT_SPEC.append(
+        {"instance": "ragspark-vision", "base_url": "http://vllm-llm:8000/v1",
+         "model": os.environ.get("RAGSPARK_LLM_NAME", "qwen3.8-27b"), "type": "vision",
+         "max_tokens": int(os.environ.get("RAGSPARK_LLM_CONTEXT", "65536")), "is_tools": False,
+         "default": False})
 
 API = os.environ.get("RAGFLOW_API", "http://127.0.0.1:9380").rstrip("/")
 _jar = http.cookiejar.CookieJar()
@@ -191,7 +205,11 @@ def main():
                 failed += 1
                 continue
             detected = found[0].get("model_types") or []
-            if s["type"] not in detected:
+            if s["type"] == "vision" and s["type"] not in detected:
+                # RAGFlow reports a vLLM model's types from its name and never lists
+                # vision for it; the LLM file (RAGSPARK_LLM_VISION) is the authority here.
+                print("[OK]   %s - vision comes from the LLM file (RAGFlow lists %s)" % (label, detected))
+            elif s["type"] not in detected:
                 print("[WARN] %s - RAGFlow detects %s, using %s" % (label, detected, s["type"]))
         else:
             print("[WARN] %s - cannot list models (%s), using spec" % (label, err(code, d)))
@@ -217,6 +235,9 @@ def main():
     code, d, _ = call("GET", "/api/v1/models/default")
     current = {m.get("model_type"): m for m in items(d)} if ok(code, d) else {}
     for s in spec:
+        if s.get("default") is False:
+            print("[OK]   default %-9s - %s is registered only, by design" % (s["type"], s["model"]))
+            continue
         cur = current.get(s["type"]) or {}
         want = ids.get((s["instance"], s["model"]))
         names_match = cur.get("model_instance") == s["instance"] and cur.get("model_name") == s["model"]
