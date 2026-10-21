@@ -533,3 +533,7 @@ the clean install of section 9 running `r5`.
   requiring every model to be pinned to a commit. The patched upstream
   Dockerfile has no floating reference left: one `FROM` and seven
   `ragflow_deps` mounts.
+- **Image `r6`:** differs from `r5` in exactly `api/utils/health_utils.py`, and
+  every file the build patches is byte for byte the one in the container
+  measured above; its build log shows both base images at the pinned digests
+  ([BUILD.md](BUILD.md)).

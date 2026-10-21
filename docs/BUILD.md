@@ -10,7 +10,8 @@ upstream.
 
 | Tag | Digest | Patches | Status |
 |---|---|---|---|
-| `0.27.2-arm64-r5` | `sha256:a34a9f1f1009442497f50da91691edbc1dc19dea4cea7a73c9673a0000f61375` | + scans: Cyrillic text layer, vision at temperature 0, whole tables | current |
+| `0.27.2-arm64-r6` | `sha256:16ba7dd9d03ae8d6a8d9f819e6c7e62d78874dfeb27367bbec536da02ea40fe9` | + health check returns its connection; base images pinned | current |
+| `0.27.2-arm64-r5` | `sha256:a34a9f1f1009442497f50da91691edbc1dc19dea4cea7a73c9673a0000f61375` | + scans: Cyrillic text layer, vision at temperature 0, whole tables | superseded |
 | `0.27.2-arm64-r4` | `sha256:1ed7725f5932a4799591104b5efd1d1ed7f50984e070be24ed4251d27341e0f8` | + research budget, query language, claim shapes | superseded |
 | `0.27.2-arm64-r3` | `sha256:8d08d824a9b248fceba8a0c5885aaf3cef7f24c7137ec87154aef53031c22e5a` | + kNN filter, agentic pipeline, Naive by default — two of them absent, see below | superseded |
 | `0.27.2-arm64-r2` | `sha256:4232ddbb513cff48c51864f081f6b82d37371927dea70bb01a200c6994f70dcc` | Chrome + reranker input | superseded |
@@ -19,8 +20,21 @@ upstream.
 Current image:
 
 ```bash
-docker pull ghcr.io/0ffch41n/ragspark-ragflow:0.27.2-arm64-r5@sha256:a34a9f1f1009442497f50da91691edbc1dc19dea4cea7a73c9673a0000f61375
+docker pull ghcr.io/0ffch41n/ragspark-ragflow:0.27.2-arm64-r6@sha256:16ba7dd9d03ae8d6a8d9f819e6c7e62d78874dfeb27367bbec536da02ea40fe9
 ```
+
+`r6` was built and pushed on 2026-10-21 on a DGX Spark, the first image built
+from pinned base images. Verified by comparing it with `r5` file by file: of the
+1947 files under `/ragflow` outside `.venv`, exactly one differs —
+`api/utils/health_utils.py`, the file of `build/ragflow/patch_health.py` — and
+`.venv` is the same. Every file the build patches is byte for byte the one in
+the container the health check was measured on, so
+[VALIDATION.md](VALIDATION.md), §11 — no database warnings, every health check
+`ok` — describes this image. When this was written the stack was still running
+`r5` with that fix applied hot; recreating it on `r6` replaces the hot patch
+with the same code baked into the image. Build inputs, pinned in `build.sh` and
+confirmed by the build log: `ubuntu:24.04@sha256:68ee2200…` and
+`infiniflow/ragflow_deps:latest@sha256:e69762c2…`, the same as `r4` and `r5`.
 
 `r5` was built and pushed on 2026-10-20 on a DGX Spark. Verified by comparing
 it with `r4` file by file: of the 1947 files under `/ragflow` outside `.venv`,
