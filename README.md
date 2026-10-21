@@ -97,8 +97,9 @@ LLM's own vision, about 17 s a page.
 ## License
 
 [Apache License 2.0](LICENSE). Third-party components run as separate
-containers under their own licenses; the RAGFlow image is built from unmodified
-upstream source with one documented build-recipe change.
+containers under their own licenses; the RAGFlow image is built from the
+upstream source with RAGSpark's documented patches
+([docs/BUILD.md](docs/BUILD.md)).
 
 RAGSpark is an independent project, not affiliated with or endorsed by NVIDIA
 or InfiniFlow. NVIDIA, DGX and DGX Spark are trademarks of NVIDIA Corporation;

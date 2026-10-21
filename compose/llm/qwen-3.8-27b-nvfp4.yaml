@@ -10,6 +10,8 @@ services:
       - vllm
       - serve
       - Inferact/Qwen3.8-27B-NVFP4
+      - --revision                      # the validated snapshot; the installer downloads this one
+      - 6128240ebaf4eaa7bad2b3d1c72c37d677c5f462
       - --served-model-name
       - qwen3.8-27b
       - --gpu-memory-utilization

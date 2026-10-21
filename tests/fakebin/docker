@@ -60,8 +60,12 @@ if args[:1] == ["rmi"]:
 if args[:1] == ["run"]:
     if "nvidia-smi" in args:
         out("GPU 0: NVIDIA GB10 (UUID: GPU-fake)")
-    if "python3" in args:                      # weights helper: <repo> <mode> at the end
-        repo, mode = args[-2], args[-1]
+    if "python3" in args:                      # weights helper: -c <script> <repo> <mode> <revision>
+        i = args.index("-c")
+        repo, mode = args[i + 2], args[i + 3]
+        s["weights_revisions"] = s.get("weights_revisions", {})
+        s["weights_revisions"][repo] = args[i + 4] if len(args) > i + 4 else ""
+        save(s)
         if mode == "online":
             s["weights_complete"].append(repo); save(s)
             out("downloaded " + repo)

@@ -1,7 +1,8 @@
 # RAGSpark model catalog - DRAFT, schema 1
 #
 # Runnable entries point to a compose file (`compose:`). That file is the
-# source of truth for the image, its digest and the vLLM flags; the catalog
+# source of truth for the image, its digest, the weights revision (`--revision`,
+# a commit of the Hugging Face repository) and the vLLM flags; the catalog
 # keeps what the wizard shows and what was measured. Candidates without a
 # compose file record what is known so far.
 #

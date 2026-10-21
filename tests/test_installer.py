@@ -95,8 +95,8 @@ class Helpers(unittest.TestCase):
 class WeightsCheck(unittest.TestCase):
     """The offline weights check that runs in the vLLM container, run here directly."""
 
-    def check(self, hub, repo="org/model"):
-        p = subprocess.run([sys.executable, "-c", install.WEIGHTS_SCRIPT, repo, "local"],
+    def check(self, hub, repo="org/model", revision=""):
+        p = subprocess.run([sys.executable, "-c", install.WEIGHTS_SCRIPT, repo, "local", revision],
                            env=dict(os.environ, HF_HUB_CACHE=hub), capture_output=True, text=True)
         return p.returncode, p.stdout.strip()
 
@@ -121,6 +121,30 @@ class WeightsCheck(unittest.TestCase):
         os.remove(os.path.join(snap, "m-2.safetensors"))
         open(os.path.join(snap, "m-2.safetensors"), "w").close()
         self.assertEqual(self.check(hub), (0, "COMPLETE " + snap))         # no checksum files needed
+
+    def test_pinned_revision_ignores_refs_main(self):
+        hub = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, hub, ignore_errors=True)
+        base = os.path.join(hub, "models--org--model")
+        os.makedirs(os.path.join(base, "refs"))
+        with open(os.path.join(base, "refs", "main"), "w") as f:
+            f.write("newer")                                               # main moved on
+        snap = os.path.join(base, "snapshots", "abc123")
+        os.makedirs(snap)
+        with open(os.path.join(snap, "config.json"), "w") as f:
+            f.write("{}")
+        open(os.path.join(snap, "model.safetensors"), "w").close()
+        self.assertEqual(self.check(hub, revision="abc123"), (0, "COMPLETE " + snap))
+        self.assertEqual(self.check(hub, revision="def456"), (3, "MISSING snapshot def456"))
+        shutil.rmtree(os.path.join(base, "refs"))                          # a pinned download writes no ref
+        self.assertEqual(self.check(hub, revision="abc123"), (0, "COMPLETE " + snap))
+
+    def test_model_repos_reads_the_pinned_revision(self):
+        cfg = {"services": {
+            "vllm-llm": {"command": ["vllm", "serve", "org/llm", "--revision", "abc123", "--served-model-name", "x"]},
+            "vllm-embed": {"command": ["vllm", "serve", "org/embed", "--runner", "pooling"]},
+            "ragflow": {"command": ["--enable-adminserver"]}}}
+        self.assertEqual(install.model_repos(cfg), [("org/embed", ""), ("org/llm", "abc123")])
 
 
 @unittest.skipUnless(os.environ.get("RAGSPARK_TEST_COMPOSE"), "set RAGSPARK_TEST_COMPOSE to a compose binary")
@@ -160,6 +184,10 @@ class EndToEnd(unittest.TestCase):
         self.assertEqual(m["config"]["lang"], "ru")
         self.assertEqual(len(m["images_pulled"]), 5)                      # es, mysql, silo, valkey, ragflow
         self.assertEqual(sorted(m["models_downloaded"]), ["BAAI/bge-reranker-v2-m3", "Inferact/Qwen3.8-27B-NVFP4"])
+        revisions = json.load(open(self.state))["weights_revisions"]       # every model pinned to a commit
+        self.assertEqual(len(revisions), 3)
+        for repo, rev in revisions.items():
+            self.assertRegex(rev, r"^[0-9a-f]{40}$", repo)
         env = sysutil.read_env(os.path.join(inst, "compose", ".env"))
         self.assertEqual(env["DEFAULT_SUPERUSER_EMAIL"], "admin@ragspark.local")
         self.assertEqual(env["RAGSPARK_LANG"], "ru")

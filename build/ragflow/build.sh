@@ -11,12 +11,17 @@ set -euo pipefail
 RAGFLOW_REPO="https://github.com/infiniflow/ragflow.git"
 RAGFLOW_TAG="v0.27.2"
 RAGFLOW_COMMIT="a024bea0cd93f39e6652a42bf84dd20c55bc560b"
-REVISION="r5"   # bump whenever the RAGSpark patch set changes (r1: Chrome; r2: + reranker input;
+REVISION="r6"   # bump whenever the RAGSpark patch set changes (r1: Chrome; r2: + reranker input;
                 # r3: + kNN filter, agentic pipeline, Naive by default;
                 # r4: + research budget, query language, claim shapes;
-                # r5: + scans: Cyrillic text layer, vision at temperature 0, whole tables)
+                # r5: + scans: Cyrillic text layer, vision at temperature 0, whole tables;
+                # r6: + health check returns its connection; base images pinned by digest)
 IMAGE="ghcr.io/0ffch41n/ragspark-ragflow"
 TAG="${RAGFLOW_TAG#v}-arm64-${REVISION}"
+# The images the upstream Dockerfile builds from, by floating tags there; pinned
+# here to the digests r4 and r5 were built from (docs/BUILD.md, build inputs).
+BASE_IMAGE="ubuntu:24.04@sha256:68ee22004a9109b44973313b02ff7b1de250f1de0f5ecb628d73f579aaff33ac"
+DEPS_IMAGE="infiniflow/ragflow_deps:latest@sha256:e69762c256ea2338a786a9b2f003da8e91e5e69b26bb6797c2206276ce32e5ff"
 WORKDIR="${RAGSPARK_BUILD_DIR:-/var/tmp/ragspark-build}"
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
@@ -54,12 +59,15 @@ git -C "$src" checkout --quiet -- Dockerfile rag/nlp/search.py rag/utils/es_conn
     rag/advanced_rag/harness/orchestrator/sufficient_context.py \
     rag/prompts/action_initialize_state.md rag/prompts/sca_query_rewrite.md \
     deepdoc/parser/pdf_parser.py rag/llm/cv_model.py rag/nlp/__init__.py \
-    rag/llm/chat_model.py api/db/services/dialog_service.py web/src/utils/authorization-util.ts
+    rag/llm/chat_model.py api/db/services/dialog_service.py web/src/utils/authorization-util.ts \
+    api/utils/health_utils.py
 python3 "$HERE/patch_dockerfile.py" "$src/Dockerfile"
+python3 "$HERE/patch_base_images.py" "$src/Dockerfile" "$BASE_IMAGE" "$DEPS_IMAGE"
 python3 "$HERE/patch_search.py" "$src/rag/nlp/search.py"
 python3 "$HERE/patch_knn_filter.py" "$src"
 python3 "$HERE/patch_agentic.py" "$src"
 python3 "$HERE/patch_scans.py" "$src"
+python3 "$HERE/patch_health.py" "$src"
 python3 "$HERE/patch_web_default.py" "$src"
 
 echo "build: building $IMAGE:$TAG"

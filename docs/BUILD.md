@@ -69,8 +69,8 @@ retrieval matrix matched the hot-patched results
 
 - `ubuntu:24.04@sha256:534baea6a22c03a63003dbc8dbe78fe34bc0d7e595d9a9dc9834884ff530eb55`
 - `infiniflow/ragflow_deps:latest@sha256:e69762c256ea2338a786a9b2f003da8e91e5e69b26bb6797c2206276ce32e5ff` — upstream refers to this image by a
-  floating tag, so a later rebuild may take different data files (see the open
-  questions in [DECISIONS.md](DECISIONS.md)).
+  floating tag, so a later rebuild could take different data files; the build
+  now pins it, and `ubuntu:24.04`, by digest (see *Build*).
 
 `r1` was verified on 2026-10-01 on a DGX Spark: `/ragflow/VERSION` reports `v0.27.2`,
 `/opt/chrome` is absent, and with RAGFlow's own compose the web UI answers
@@ -98,13 +98,18 @@ The script:
 1. clones RAGFlow at tag `v0.27.2` and **verifies the commit**
    (`a024bea0…`) — if the tag ever moves, it stops;
 2. resets the patched files to upstream and applies the RAGSpark patches;
-3. builds `ghcr.io/0ffch41n/ragspark-ragflow:0.27.2-arm64-r5` with OCI labels
+   [patch_base_images.py](../build/ragflow/patch_base_images.py) also pins the
+   two images the Dockerfile builds from — `ubuntu:24.04` and
+   `infiniflow/ragflow_deps:latest`, floating tags upstream — to the digests set
+   in `build.sh` (those of `r4` and `r5`). This changes no code in the image;
+   it makes a rebuild take the same base and data files;
+3. builds `ghcr.io/0ffch41n/ragspark-ragflow:0.27.2-arm64-r6` with OCI labels
    (source, version, upstream commit, license);
 4. with `--push`, pushes the image to GHCR.
 
 ## Differences from upstream
 
-Six, each applied by a script that stops the build if the code it expects is
+Seven, each applied by a script that stops the build if the code it expects is
 not there (for example after a RAGFlow version change):
 
 1. [patch_dockerfile.py](../build/ragflow/patch_dockerfile.py) — the Chrome and
@@ -135,6 +140,12 @@ not there (for example after a RAGFlow version change):
    layer; vision calls run at temperature 0 (`RAGSPARK_VISION_TEMPERATURE`)
    instead of the chat's sampling; and the chunker keeps every markdown table
    whole, with its title. D14 in [DECISIONS.md](DECISIONS.md), §10.
+7. [patch_health.py](../build/ragflow/patch_health.py) — the health check
+   returns its database connection to the pool. Upstream's probe kept it
+   checked out until RAGFlow's own `close_stale(age=30)` closed it under the
+   worker, so under Docker's 15 s health check every third check failed once
+   and logged `Database connection issue (attempt 1/5): (0, '')`, about 1900
+   times a day. §11.
 
 ## Expected warnings
 

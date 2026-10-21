@@ -76,6 +76,8 @@ services:
       - vllm
       - serve
       - deepvk/USER-bge-m3
+      - --revision                      # the validated snapshot; the installer downloads this one
+      - 0cc6cfe48e260fb0474c753087a69369e88709ae
       - --runner
       - pooling
       - --gpu-memory-utilization
@@ -89,6 +91,8 @@ services:
       - vllm
       - serve
       - BAAI/bge-reranker-v2-m3
+      - --revision                      # the validated snapshot; the installer downloads this one
+      - 953dc6f6f85a1b2dbfca4c34a2796e7dde08d41e
       - --runner
       - pooling
       - --gpu-memory-utilization

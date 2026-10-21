@@ -9,7 +9,8 @@ compose, the RAGSpark image `0.27.2-arm64-r1` and three vLLM containers on the
 same Docker network. Section 6 is stage 3.2, RAGSpark's own compose (D17);
 section 7 is stage 3.3, the installer (D18); section 8 is the chat modes and
 the images `r3` and `r4` (D19); section 9 is stage 3.4, a clean install from a
-fresh clone (D18); section 10 is scanned documents (D14).
+fresh clone (D18); section 10 is scanned documents (D14); section 11 is three
+checks of 2026-10-21: database warnings, sign-up, pinned revisions (D3, D6).
 Numbers can be reproduced with the scripts in [tools/](../tools/).
 
 ## 1. LLM serving — Qwen 3.8 27B NVFP4
@@ -479,3 +480,56 @@ a vision model — no other model is loaded.
   measured above ([BUILD.md](BUILD.md)).
 - **Not covered yet:** a real scan with skew and paper noise; cells made of
   symbols only (● matrices) carry small errors at any temperature.
+
+## 11. Database warnings, sign-up, pinned revisions
+
+Three open questions of [DECISIONS.md](DECISIONS.md), checked on 2026-10-21 on
+the clean install of section 9 running `r5`.
+
+- **Database warnings (D3, patch 7).** `Database connection issue (attempt
+  1/5): (0, '')` appeared 1961 times in `/ragflow/logs/ragflow_server.log`
+  (not in `docker logs`) between 2026-10-20 10:51 and 2026-10-21 10:27, all
+  from `api/ragflow_server.py`, 46 s apart in 250 of the last 300 intervals
+  and 47 s in 39, each followed 1 s later by the Elasticsearch probe of the
+  same health check. MySQL is not the cause: `wait_timeout` is 28800 s, and
+  `Aborted_clients` stayed flat over a minute with two warnings. The cause is
+  in RAGFlow. Docker's health check calls `/api/v1/system/healthz` every 15 s;
+  `check_db` in `api/utils/health_utils.py` runs `SELECT 1` outside
+  `connection_context`, so the worker thread keeps a pooled connection checked
+  out; and `close_connection()`, run after every request, calls
+  `DB.close_stale(age=30)`, which closes every connection checked out for
+  more than 30 s, that one included. The third check after a reconnect closes
+  it, the fourth fails and retries after 1 s: 3 × 15 + 1 = 46 s. With the probe
+  inside `connection_context` (patch 7, applied hot, then `docker restart`):
+  in the next 10 minutes 0 warnings, 0 `DB execution failure`, 42 health
+  checks, all `ok`; new MySQL connections 6.2 a minute instead of about 9.
+  `close_stale(age=30)` itself closes any connection held longer than 30 s, a
+  long transaction's too; that was not seen under RAGSpark's load.
+- **Sign-up on the server side.** Closed. `REGISTER_ENABLED=0` (RAGSpark's
+  `env.example`; upstream's default is 1) reaches the server, which reports
+  `registerEnabled: 0` at `/api/v1/system/config`. `POST /api/v1/users` from
+  the LAN address with a deliberately invalid e-mail answered `User
+  registration is disabled!`; the handler checks the flag first, and with the
+  flag on the invalid address would be rejected before any write, so the
+  probe could not create an account, and the account list was unchanged. The
+  admin service, reachable through port 80 at `/api/v1/admin` (nginx → 9381),
+  answered 401 without a login, both to listing and to creating users. Only
+  port 80 is published. No OAuth channel is configured — RAGFlow's OAuth
+  callback creates accounts without checking `REGISTER_ENABLED`
+  ([INSTALL.md](INSTALL.md)). The only account is the installer's superuser,
+  and its password is none of `admin`, `ragflow` or empty (a local hash check,
+  no login). RAGFlow's fallback to the literal password `admin` in
+  `api/db/init_data.py` runs only with `--init-superuser`, which RAGSpark does
+  not pass; the first superuser is created by the admin service from
+  `ADMIN_DEFAULT_PASSWORD`.
+- **Pinned revisions (D6, D3).** `main` of each model repository on Hugging
+  Face pointed at the cached snapshot (`6128240e…`, `0cc6cfe4…`,
+  `953dc6f6…`), and `ubuntu:24.04` and `infiniflow/ragflow_deps:latest` at
+  the digests `r4` and `r5` were built from, so the pins record what was
+  validated. vLLM's own `download_weights_from_hf` resolved the pinned
+  revisions offline, with `refs/main` and without it (a pinned download writes
+  none), and loaded the config and tokenizer at them; the tokenizer follows
+  `--revision` by default. Installer tests: 25 of 25, the end-to-end test
+  requiring every model to be pinned to a commit. The patched upstream
+  Dockerfile has no floating reference left: one `FROM` and seven
+  `ragflow_deps` mounts.

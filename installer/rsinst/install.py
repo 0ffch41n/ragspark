@@ -47,28 +47,34 @@ exec python3 {install_dir}/installer/ragspark.py "$@"
 
 # Mode "online" downloads the files vLLM needs, skipping duplicate formats (*.bin,
 # *.onnx) that some repositories carry. Mode "local" only reads the cache: the
-# snapshot that refs/main points to must hold config.json and every weight file.
+# snapshot must hold config.json and every weight file. The snapshot is the
+# revision the compose file pins with `--revision` (a commit hash), or the one
+# refs/main points to when there is none.
 # huggingface_hub's own offline check is not used: it also demands auxiliary
 # files (checksums, quantizer metadata) that vLLM does not read and that vLLM's
 # own download skips, and would send a complete cache back to the network.
 WEIGHTS_SCRIPT = r'''
 import json, os, sys
 repo, mode = sys.argv[1], sys.argv[2]
+revision = sys.argv[3] if len(sys.argv) > 3 and sys.argv[3] else None
 if mode == "online":
     from huggingface_hub import snapshot_download
     patterns = ["*.json", "*.safetensors", "*.py", "*.txt", "*.model", "*.tiktoken", "*.jinja", "tokenizer*"]
     try:
-        path = snapshot_download(repo, allow_patterns=patterns)
+        path = snapshot_download(repo, revision=revision, allow_patterns=patterns)
     except Exception as e:
         print("ERROR", type(e).__name__, str(e)[:300]); sys.exit(2)
 else:
     hub = os.environ.get("HF_HUB_CACHE") or os.path.join(os.environ.get("HF_HOME") or "/root/.cache/huggingface", "hub")
     base = os.path.join(hub, "models--" + repo.replace("/", "--"))
-    try:
-        with open(os.path.join(base, "refs", "main")) as f:
-            path = os.path.join(base, "snapshots", f.read().strip())
-    except OSError:
-        print("MISSING refs/main"); sys.exit(3)
+    if revision:
+        path = os.path.join(base, "snapshots", revision)
+    else:
+        try:
+            with open(os.path.join(base, "refs", "main")) as f:
+                path = os.path.join(base, "snapshots", f.read().strip())
+        except OSError:
+            print("MISSING refs/main"); sys.exit(3)
     if not os.path.isdir(path):
         print("MISSING snapshot", os.path.basename(path)); sys.exit(3)
 missing = []
@@ -243,11 +249,13 @@ def step_gpu(cfg):
 
 
 def model_repos(cfg):
+    """(repository, revision) of every vLLM service; revision is "" when not pinned."""
     repos = []
     for name, svc in sorted((cfg.get("services") or {}).items()):
         cmd = svc.get("command") or []
         if name.startswith("vllm-") and "serve" in cmd and cmd.index("serve") + 1 < len(cmd):
-            repos.append(cmd[cmd.index("serve") + 1])
+            rev = cmd[cmd.index("--revision") + 1] if "--revision" in cmd[:-1] else ""
+            repos.append((cmd[cmd.index("serve") + 1], rev))
     return repos
 
 
@@ -257,7 +265,7 @@ PASS_ENV = ["HF_TOKEN", "HF_ENDPOINT", "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY",
 WEIGHTS_CONTAINER = "ragspark-weights"
 
 
-def _weights(image, models_dir, repo, mode, capture=True):
+def _weights(image, models_dir, repo, mode, capture=True, revision=""):
     """Check (mode local) or download (mode online) one repository in a vLLM container."""
     run(["docker", "rm", "-f", WEIGHTS_CONTAINER])
     cmd = ["docker", "run", "--rm", "--name", WEIGHTS_CONTAINER] + \
@@ -269,7 +277,7 @@ def _weights(image, models_dir, repo, mode, capture=True):
     for var in PASS_ENV:
         if os.environ.get(var):
             cmd += ["-e", var]
-    cmd += ["--entrypoint", "python3", image, "-c", WEIGHTS_SCRIPT, repo, mode]
+    cmd += ["--entrypoint", "python3", image, "-c", WEIGHTS_SCRIPT, repo, mode, revision]
     code, out = run(cmd, capture=capture, timeout=600 if mode == "local" else None)
     if code == 124:
         run(["docker", "rm", "-f", WEIGHTS_CONTAINER])       # the timeout killed the client only
@@ -284,22 +292,23 @@ def step_weights(cfg, config, manifest):
         return False
     models_dir = config["models_dir"]
     make_dirs(paths.host(models_dir), manifest)
-    for repo in repos:
+    for repo, rev in repos:
+        label = "%s@%s" % (repo, rev[:12]) if rev else repo
         cache = os.path.join(paths.host(models_dir), "hub", "models--" + repo.replace("/", "--"))
         existed = os.path.exists(cache) and repo not in manifest.data["models_downloaded"]
-        code, out = _weights(image, models_dir, repo, "local")
+        code, out = _weights(image, models_dir, repo, "local", revision=rev)
         if code == 0:
-            ui.status("OK", ui.t("weights_present", repo=repo))
+            ui.status("OK", ui.t("weights_present", repo=label))
             continue
-        ui.status("DO", ui.t("weights_downloading", repo=repo))
+        ui.status("DO", ui.t("weights_downloading", repo=label))
         if not existed:
             manifest.add_model(repo)
-        _weights(image, models_dir, repo, "online", capture=False)
-        code, out = _weights(image, models_dir, repo, "local")
+        _weights(image, models_dir, repo, "online", capture=False, revision=rev)
+        code, out = _weights(image, models_dir, repo, "local", revision=rev)
         if code != 0:
-            ui.status("FAIL", ui.t("weights_failed", repo=repo, err=out.strip()[-300:]))
+            ui.status("FAIL", ui.t("weights_failed", repo=label, err=out.strip()[-300:]))
             return False
-        ui.status("OK", ui.t("weights_done", repo=repo))
+        ui.status("OK", ui.t("weights_done", repo=label))
     return True
 
 

@@ -25,9 +25,10 @@ re-check them before any version bump.
 - **How:** all code is written from scratch. No files or fragments are copied
   from other projects, so no third-party notices are inherited. Third-party
   software (RAGFlow, Elasticsearch, MySQL, Valkey, MinIO fork, vLLM) runs as
-  separate containers under its own licenses. RAGFlow's source is used
-  unmodified; its image is built with one RAGSpark change to the build recipe
-  (see D3), marked in the patched Dockerfile.
+  separate containers under its own licenses. RAGFlow's image is built from
+  its upstream source with RAGSpark's patches, each listed in D3 and
+  [BUILD.md](BUILD.md); changes to RAGFlow's code are marked with `ragspark:`
+  comments that name the patch script.
 - **Risk:** copying any third-party file later would require keeping its
   copyright notices — avoid, or record it here.
 
@@ -46,7 +47,9 @@ re-check them before any version bump.
 - **How:** build from the `v0.27.2` tag on a DGX Spark (native arm64, no
   emulation), slim edition (no bundled embedding models — vLLM provides them),
   publish to GHCR as `ghcr.io/0ffch41n/ragspark-ragflow`, reference by digest.
-  Recipe: [BUILD.md](BUILD.md).
+  The images the upstream Dockerfile builds from by floating tags
+  (`ubuntu:24.04`, `infiniflow/ragflow_deps:latest`) are pinned by digest, so a
+  rebuild takes the same base and data files. Recipe: [BUILD.md](BUILD.md).
 - **Published:** `0.27.2-arm64-r5` (2026-10-20),
   `sha256:a34a9f1f1009442497f50da91691edbc1dc19dea4cea7a73c9673a0000f61375`,
   the first image with all patches below. It replaces `0.27.2-arm64-r4`
@@ -60,7 +63,7 @@ re-check them before any version bump.
   patches 1–2) and `0.27.2-arm64-r1` (2026-10-01,
   `sha256:1bf5fc0031bff2d775dc8bc1626b2820f9b658b43696a9bb4bdc02a8304f0660`,
   patch 1).
-- **Deviations from upstream** — six, each applied by a script that refuses
+- **Deviations from upstream** — seven, each applied by a script that refuses
   to run if the code it expects is not there:
   1. The Chrome/ChromeDriver steps run on x86_64 only: the archives in
      `ragflow_deps` are x86 builds that cannot run on arm64. Browser-driven
@@ -82,6 +85,11 @@ re-check them before any version bump.
   6. Three fixes that let scanned and Russian PDFs be read (`r5`), D14: DeepDOC
      keeps a Russian page's text layer, vision calls run at temperature 0, and
      the chunker never splits a markdown table.
+  7. The health check returns its database connection to the pool (`r6`).
+     Upstream's probe kept a pooled connection until RAGFlow's own
+     `close_stale(age=30)` closed it under the worker thread, so every third
+     check under Docker's 15 s health check logged a reconnect. See
+     [VALIDATION.md](VALIDATION.md), section 11.
 - **Verified (2026-10-01):** the unmodified upstream build completed on a DGX
   Spark; with RAGFlow's own compose, the server reported `v0.27.2`, served the
   web UI, and Elasticsearch, MySQL, Valkey and the object store were healthy.
@@ -123,6 +131,10 @@ re-check them before any version bump.
 - **How:**
   - each catalog entry pins its own image by digest — newest models sometimes
     need model-specific images, and some FP4 kernels have gaps on sm_121;
+  - the weights are pinned too: every `vllm serve` carries `--revision` with
+    the commit of the Hugging Face repository that was validated, and the
+    installer downloads and checks exactly that snapshot, so a repository that
+    changes under the same name does not change an install;
   - pooling models (embeddings, reranker) run with a neutral entrypoint
     (`/usr/bin/env`), because the image entrypoint is `vllm serve`;
   - with Docker's `systemd` cgroup driver, `systemctl daemon-reload` can revoke
@@ -516,26 +528,17 @@ re-check them before any version bump.
   Measure the gain against the extra time.
 - **Upstream reports.** RAGFlow defects found in stage 3 should be reported to
   the `0.27.x` branch: the reranker input (D3 patch 2), DeepDOC on Cyrillic
-  (D14), the kNN filter (D3 patch 3) and the agentic-pipeline defects of D19.
+  (D14), the kNN filter (D3 patch 3), the agentic-pipeline defects of D19, and
+  the health check's held connection (D3 patch 7) together with
+  `close_stale(age=30)` itself, which closes any connection held longer than
+  30 s, a long transaction's included.
 - **Ultra.** The fourth level answers 7/7 on the acceptance sample (`r4`), but
   its own distinguishing feature is still untested: the knowledge-graph tool
   needs a graph built at indexing, and none of RAGSpark's question sets has
   one, so the level was measured without it.
-- **Database warnings.** RAGFlow logs `Database connection issue (attempt
-  1/5): (0, '')` about every 46 s and reconnects on the first retry. Find the
-  cause (pooled connection closed under it) before it hides a real failure.
-- **Model revisions.** Hugging Face repositories can change under the same
-  name. Pin a revision per catalog entry so that every install gets the
-  weights that were validated.
-- **Sign-up on the server side.** The UI hides sign-up; whether the API rejects
-  registration requests is unverified.
 - **ODBC driver licence.** The upstream Dockerfile installs Microsoft's ODBC
   driver and accepts its EULA. Review its redistribution terms for the
   published image, or drop the driver if SQL Server connectors are not needed.
-- **Dependency image.** The upstream Dockerfile copies data files (OCR models,
-  NLTK data, Tika, uv) from `infiniflow/ragflow_deps:latest`, a floating tag.
-  Pin it by digest in the build so that a rebuild reproduces the published
-  image; the digests used for each image are in [BUILD.md](BUILD.md).
 
 ---
 

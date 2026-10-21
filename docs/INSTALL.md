@@ -87,8 +87,10 @@ its own settings; a registry mirror is described in [BUILD.md](BUILD.md).
 Weights are downloaded by a temporary container from the vLLM image, which
 already has `huggingface_hub`; nothing is installed on the host. Only the
 files vLLM loads are taken (`*.safetensors`, configs, tokenizer), not the
-duplicate `*.bin` and `*.onnx` copies some repositories carry. Weights already
-in the directory are reused.
+duplicate `*.bin` and `*.onnx` copies some repositories carry. Each model is
+taken at the revision its compose file pins (`--revision`, the commit that was
+validated), not at whatever the repository holds today. Weights already in the
+directory are reused.
 
 Every step can be repeated. If the installation stops — a download failed, the
 machine rebooted, Ctrl+C — run `sudo ./install.sh` again: it continues with
@@ -174,6 +176,15 @@ For **scanned** PDFs — documents without a text layer — choose the vision mo
 every page as an image with the chat's own LLM: about 17 s a page, and chat
 answers are slower while it indexes. Keep *Plain Text* for every PDF that has
 a text layer: it is faster and reads the text exactly.
+
+**Users.** Sign-up is off: the web interface hides it and the server rejects
+registration requests too (`REGISTER_ENABLED=0`, checked in
+[VALIDATION.md](VALIDATION.md), §11). New users are created by the superuser
+through the admin service (`/api/v1/admin/users`), which answers only after
+the superuser's login. Do not configure sign-in through an external provider
+(OAuth, OIDC) without limiting who can use it: RAGFlow creates an account for
+anyone who signs in through a configured provider, whether sign-up is on or
+not.
 
 ### Reasoning levels
 
