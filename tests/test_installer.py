@@ -183,7 +183,7 @@ class EndToEnd(unittest.TestCase):
         self.assertEqual(m["status"], "installed")
         self.assertEqual(m["config"]["lang"], "ru")
         self.assertEqual(len(m["images_pulled"]), 5)                      # es, mysql, silo, valkey, ragflow
-        self.assertEqual(sorted(m["models_downloaded"]), ["BAAI/bge-reranker-v2-m3", "Inferact/Qwen3.8-27B-NVFP4"])
+        self.assertEqual(sorted(m["models_downloaded"]), ["BAAI/bge-reranker-v2-m3", "unsloth/Qwen3.8-27B-NVFP4"])
         revisions = json.load(open(self.state))["weights_revisions"]       # every model pinned to a commit
         self.assertEqual(len(revisions), 3)
         for repo, rev in revisions.items():

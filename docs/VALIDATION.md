@@ -10,7 +10,8 @@ same Docker network. Section 6 is stage 3.2, RAGSpark's own compose (D17);
 section 7 is stage 3.3, the installer (D18); section 8 is the chat modes and
 the images `r3` and `r4` (D19); section 9 is stage 3.4, a clean install from a
 fresh clone (D18); section 10 is scanned documents (D14); section 11 is three
-checks of 2026-10-21: database warnings, sign-up, pinned revisions (D3, D6).
+checks of 2026-10-21: database warnings, sign-up, pinned revisions (D3, D6);
+section 12 is the change of the LLM checkpoint on 2026-10-28 (D16).
 Numbers can be reproduced with the scripts in [tools/](../tools/).
 
 ## 1. LLM serving — Qwen 3.8 27B NVFP4
@@ -38,6 +39,8 @@ Numbers can be reproduced with the scripts in [tools/](../tools/).
   aggregate; the server stayed up.
 - One earlier ad-hoc answer contained a Chinese fragment («相关信息»); the
   acceptance test should keep checking for CJK characters.
+- These numbers are for the checkpoint `Inferact/Qwen3.8-27B-NVFP4`. Since
+  2026-10-28 the default is `unsloth/Qwen3.8-27B-NVFP4` — see section 12.
 
 ## 2. Model registration through the RAGFlow API
 
@@ -537,3 +540,82 @@ the clean install of section 9 running `r5`.
   every file the build patches is byte for byte the one in the container
   measured above; its build log shows both base images at the pinned digests
   ([BUILD.md](BUILD.md)).
+
+## 12. LLM checkpoint — unsloth instead of Inferact
+
+Evidence for the checkpoint in D16. Collected 2026-10-23 on a second DGX Spark
+(same image, flags and driver), with the checkpoint served there and reached
+from the production RAGFlow through a test registration, and 2026-10-28 on the
+production Spark of section 9 after the switch (image `r6`, DGX OS 7.6.0,
+driver 580.178.04, CUDA 13.0). Speed: a Russian DOCX guide as context (1,283
+tokens), 512 output tokens forced, temperature 0, three runs per case, MTP
+acceptance from vLLM's metrics; the benchmark script is not in `tools/`.
+
+- **Why Inferact's checkpoint was slow.** A torch profile of one 256-token
+  answer on one Spark: GPU busy 98%; bf16 matrix multiplications 31% (the
+  linear-attention projections `in_proj_qkv`, `in_proj_z`, `in_proj_a`,
+  `in_proj_b` of all 48 linear layers, which its quantisation left in bf16),
+  bf16 matrix-vector products 31% (mostly the MTP drafts reading the 2.54 GB
+  bf16 `lm_head` three times per step), FP4 34%, the rest 4%. Neither the
+  FlashInfer autotuner nor the GB10 environment variables of community recipes
+  changed the speed: 21.0 tok/s as shipped, 20.6 without autotuning, 20.9 with
+  the variables.
+- **The unsloth checkpoint** (revision `f0b7c9e7…`, Apache-2.0, compressed
+  tensors): FP8 for linear attention `in_proj_qkv`, `in_proj_z`, `out_proj`,
+  for attention q/k/v/o and for `lm_head`; NVFP4 for the MLP; 23.4 GB instead
+  of 26.4. vLLM 0.27.1 selects `CutlassFP8ScaledMMLinearKernel` and
+  `FlashInferCutlassNvFp4LinearKernel` and loads MTP from
+  `model_mtp.safetensors` without extra flags. Tokenizer, vocabulary and
+  `generation_config` are identical; RAGFlow-style prompts (retrieval, tools,
+  a tool round trip, thinking off) render byte for byte the same. The chat
+  template differs elsewhere: it merges leading system and developer messages
+  and is stricter about malformed tool calls.
+- **Speed:**
+
+  | | Inferact, second Spark | unsloth, second Spark | Inferact, production | unsloth, production |
+  |---|---|---|---|---|
+  | 1k context, tok/s | 21.0 | 27.8 | 21.1 | **27.2** |
+  | 8k context, tok/s | 21.4 | 25.8 | 21.3 | **26.0** |
+  | 8k, first token | 4.60 s | 6.55 s | 4.94 s | 6.43 s |
+  | 4 concurrent, aggregate tok/s | 77.4 | 86.7 | 77.0 | 84.7 |
+  | 8 concurrent, aggregate tok/s | 128.6 | 133.9 | 126.8 | 137.3 |
+  | MTP draft tokens accepted | 74% | 73% | 74% | 74% |
+
+  Decode is 21–32% faster for one user; prefill is slower, so a long prompt
+  waits about 1.5 s longer for its first token. Under 8 concurrent requests the
+  gain shrinks to 4–8%.
+- **Through RAGFlow, side by side (2026-10-23).**
+  - Acceptance questions: 2 of 2 with citations, the refusal, Low in 11 s.
+  - Acceptance sample, all five levels: 7/7 and 1/1 at every level; medians
+    Naive 2 s, Low 11 s, Medium 41 s, High 36 s, Ultra 40 s.
+  - The digital MSI manual (Plain Text, 41 chunks), levels Naive, Low,
+    Medium: unsloth 8/8, 8/8, 8/8; Inferact 8/8, 8/8, 7/8 (at Medium one
+    answer gave a wrong figure, «16 GB»). Both rejected 2 of 2
+    no-answer questions at Naive and Low and 0 of 2 at Medium — the agent
+    refuses in its own words or infers Wi-Fi from the specifications, the same
+    with either checkpoint. Medium median 55 s against 117 s.
+  - Four pages of the section 10 scan through vision: 84 s, Cyrillic 0.879,
+    0 garbled words, 5/5 and 2/2 (D15 settings).
+  - 30 Russian answers at temperature 0.7: no CJK characters with unsloth, one
+    fragment with Inferact («拥estion» inside an answer about TCP).
+- **After the switch on the production Spark (2026-10-28).** Only `vllm-llm`
+  was recreated; the catalog id, the compose file and the served name stayed,
+  so the RAGFlow registrations, chats and `.env` did not change. Healthy after
+  443 s: weights 22.13 GiB loaded in 171 s from disk, engine start 217 s of
+  which 76 s compilation; KV cache 32.4 GiB, 770,357 tokens at
+  `gpu_memory_utilization 0.50`. A Russian answer, a tool call and an image:
+  correct. Acceptance sample, all five levels: 7/7 and 1/1 at every level;
+  medians Naive 2 s, Low 10 s, Medium 41 s, High 37 s, Ultra 36 s. The same
+  four scanned pages: 85 s, 8 chunks, Cyrillic 0.880, 0 garbled words, 5/5 and
+  2/2 (Inferact on `r6`: 118 s, 0.886, 0, 5/5 and 2/2).
+- **Memory at the switch.** On GB10 CUDA does not count the file cache as
+  free: before the switch `torch.cuda.mem_get_info` reported 1.4 GiB free while
+  the kernel's `MemAvailable` was 39 GiB, 38.9 GiB of it cache (mostly the
+  freshly copied weights). The old model's 61 GiB would have left about 62 GiB
+  for the 60.9 GiB vLLM reserves at 0.50, so the cache was dropped between
+  stopping the old container and starting the new one, as in
+  [COMPOSE.md](COMPOSE.md), *Troubleshooting*.
+- **The installer** takes the repository and revision from the compose file:
+  its tests pass 25 of 25 with the new pin, and for the new compose file it
+  resolves `unsloth/Qwen3.8-27B-NVFP4` at `f0b7c9e7…`. The copied weights
+  matched the hub's sha256 in all 11 files.

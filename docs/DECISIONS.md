@@ -316,20 +316,34 @@ re-check them before any version bump.
 
 ## D16. Default LLM — Qwen 3.8 27B NVFP4 with MTP
 
-- **Decision:** `Inferact/Qwen3.8-27B-NVFP4` on the official vLLM 0.27.1
+- **Decision:** `unsloth/Qwen3.8-27B-NVFP4` on the official vLLM 0.27.1
   image, multi-token prediction with 3 speculative tokens, thinking disabled
   and sampling (temperature 0.7, top-p 0.8, top-k 20) and an 8192-token
   answer limit set on the server (D19). Flags are in [compose/llm/qwen-3.8-27b-nvfp4.yaml](../compose/llm/qwen-3.8-27b-nvfp4.yaml).
 - **Why:** strong open model in its size class, Apache-2.0, native tool
   calling, decode speed nearly flat on long contexts. In Russian probes
   (30 answers) it never mixed in other scripts and cited sources correctly.
-- **Measured:** 10.2 tok/s per user without MTP, **17.1** with MTP (19–21 on
-  answers drawn from context); 8 concurrent requests served, ~90 tok/s
-  aggregate. Thinking disabled on the server because RAGFlow does not pass the
-  switch: with thinking, the same answer took 1,116 tokens and 108 s instead of
-  101 tokens and 10 s.
-- **Trade-off:** slower per user than Gemma 4 26B-A4B (4B active parameters,
-  ~23 tok/s), which stays in the catalog as an alternative.
+- **Why this checkpoint (since 2026-10-28):** until then the default was
+  `Inferact/Qwen3.8-27B-NVFP4`, the same model quantised differently. A
+  profile showed 62% of its decode step spent on weights it keeps in bf16: the
+  largest linear-attention projections of all 48 linear layers and the 2.5 GB
+  `lm_head`, which the MTP drafts read three times per step. unsloth's
+  checkpoint stores those in FP8: 23.4 GB instead of 26.4, **29% more tokens
+  per second** for one user on the production Spark (27.2 instead of 21.1),
+  the same MTP acceptance (74%), and equal or better answers in every RAGFlow
+  check ([VALIDATION.md](VALIDATION.md), section 12). The earlier note that
+  Inferact's checkpoint had the higher MTP acceptance (0.897 vs 0.788) did not
+  reproduce.
+- **Measured:** 27.2 tok/s per user at a 1k-token context, 26.0 at 8k;
+  8 concurrent requests ~137 tok/s aggregate. The first measurements, on
+  Inferact's checkpoint, are in section 1 of VALIDATION (10.2 tok/s without
+  MTP, 17.1 with it). Thinking disabled on the server because RAGFlow does not
+  pass the switch: with thinking, the same answer took 1,116 tokens and 108 s
+  instead of 101 tokens and 10 s.
+- **Trade-off:** long prompts are read more slowly: the first token of an
+  8k-token prompt comes after 6.4 s instead of 4.9 s. For answers of a few
+  hundred tokens the faster decode still wins. Gemma 4 26B-A4B stays in the
+  catalog as an alternative.
 
 ## D17. Runtime — RAGSpark's own compose
 

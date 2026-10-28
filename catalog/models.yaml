@@ -51,23 +51,23 @@ models:
       note: alternative to the default LLM - faster per user (4B active parameters)
 
     - id: qwen-3.8-27b-nvfp4
-      hf_repo: Inferact/Qwen3.8-27B-NVFP4   # higher MTP acceptance than unsloth (0.897 vs 0.788)
+      hf_repo: unsloth/Qwen3.8-27B-NVFP4    # FP8 where Inferact's checkpoint keeps bf16: faster, same MTP acceptance (D16)
       served_name: qwen3.8-27b
       modes: [single]
       compose: compose/llm/qwen-3.8-27b-nvfp4.yaml   # image, flags: MTP 3, thinking off, fp8 KV cache
-      memory_share: 0.50                # of unified memory; weights ~18 GB, the rest KV cache
+      memory_share: 0.50                # of unified memory; weights ~22 GiB, the rest KV cache (~770k tokens)
       context:
         default: 65536
       tool_calling: true
       vision: true                      # vision tower in the checkpoint, vLLM serves images; parses scans as ragspark-vision (D14)
-      serving_verified: "2026-10-02 DGX OS 7.5.0, driver 580.178.04, CUDA 13.0"
-      measured:
-        decode_tok_s_single: 17.1       # MTP 3; 10.2 without MTP; 19-21 on answers from context
-        concurrency_8: "all OK, ~90 tok/s aggregate"
+      serving_verified: "2026-10-28 DGX OS 7.6.0, driver 580.178.04, CUDA 13.0"
+      measured:                         # VALIDATION section 12; Inferact's checkpoint in parentheses
+        decode_tok_s_single: 27.2       # MTP 3, 1k context (21.1); 26.0 at 8k (21.3), first token at 8k 6.4 s (4.9)
+        concurrency_8: "all OK, ~137 tok/s aggregate (127)"
         startup_min: 7                  # weights cached; MTP + CUDA graph capture; 5.5 with the compile cache
-        language_mixing: "0 of 30 probe answers; 1 CJK fragment seen in an earlier ad-hoc answer"
+        language_mixing: "0 of 30 probe answers (Inferact's checkpoint: 1 of 30)"
       validated: false                  # answered RAG questions correctly (2026-10-07); same speed under compose (2026-10-08); formal test pending
-      license: "Apache-2.0 (base model Qwen/Qwen3.8-27B); confirm on the checkpoint card"
+      license: "Apache-2.0 (checkpoint card and base model Qwen/Qwen3.8-27B, checked 2026-10-28)"
       note: >-
         min_p and logit_bias are ignored with speculative decoding.
         Add "Answer only in Russian" to the assistant prompt as a safeguard.
