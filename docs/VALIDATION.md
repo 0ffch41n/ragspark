@@ -11,7 +11,8 @@ section 7 is stage 3.3, the installer (D18); section 8 is the chat modes and
 the images `r3` and `r4` (D19); section 9 is stage 3.4, a clean install from a
 fresh clone (D18); section 10 is scanned documents (D14); section 11 is three
 checks of 2026-10-21: database warnings, sign-up, pinned revisions (D3, D6);
-section 12 is the change of the LLM checkpoint on 2026-10-28 (D16).
+section 12 is the change of the LLM checkpoint on 2026-10-28 (D16); section
+13 is the separator in DOCX chunks on 2026-10-29 (D3).
 Numbers can be reproduced with the scripts in [tools/](../tools/).
 
 ## 1. LLM serving — Qwen 3.8 27B NVFP4
@@ -619,3 +620,60 @@ acceptance from vLLM's metrics; the benchmark script is not in `tools/`.
   its tests pass 25 of 25 with the new pin, and for the new compose file it
   resolves `unsloth/Qwen3.8-27B-NVFP4` at `f0b7c9e7…`. The copied weights
   matched the hub's sha256 in all 11 files.
+
+## 13. DOCX chunks — a separator between paragraphs
+
+Evidence for deviation 8 of D3, collected 2026-10-29 on the production Spark
+(`r6`, the LLM of section 12). The test document is the 77-paragraph Russian
+guide to testing a GPU server that section 12 uses as context: commands and
+prose, Latin and Cyrillic mixed. It was indexed with the installer's settings
+(naive chunking, delimiter `\n`, 512 tokens).
+
+- **Cause.** `naive_merge_docx` in `rag/nlp/__init__.py` lets `_build_cks`
+  split each paragraph on the delimiter; each piece is stripped and the
+  delimiter dropped. `_merge_cks` then packs the pieces up to the token budget
+  with `text + text`. A replay of RAGFlow's own code on the guide found 74
+  junctions, all at paragraph boundaries: 25 join a letter or digit to a letter
+  or digit, 12 of them Latin to Cyrillic, and at 10 the keyword-search tokens
+  change (`sensorsgit` instead of `sensor git`, `h100nvidia`, `паркритерий`,
+  `gpufor`). With RAGFlow's default delimiter `\n!?;。；！？` three dropped `;`
+  add three more. PDFs are chunked by `naive_merge` and are not affected.
+- **The fix** (`build/ragflow/patch_docx.py`) joins the pieces with a newline.
+  RAGFlow's own DOCX chunking of the guide, in throwaway containers of the
+  `r6` image with and without the fixed module:
+
+  | | `r6` | with the fix |
+  |---|---|---|
+  | chunks | 3 | 3 |
+  | paragraph boundaries glued, of 76 | 74 | **0** |
+  | boundaries with a newline | 0 | 74 |
+  | glued search tokens | 8 of the 8 checked | **none** |
+
+  Chunk borders do not move: the fixed chunks with the added newlines removed
+  equal the old chunks character for character.
+- **The patch chain** on a fresh clone of `a024bea`: all nine scripts apply,
+  a second run of `patch_docx.py` reports "already applied", and every patched
+  file equals the running `r6` container's except `rag/nlp/__init__.py`, which
+  differs only in `_merge_cks`.
+- **Through RAGFlow.** The guide was indexed before and after the fix was
+  applied to the running container (`docker cp` and a restart, healthy in
+  40 s); 8 questions next to former glue points and 2 without an answer, D15
+  settings:
+
+  | | Before | After |
+  |---|---|---|
+  | Glued boundaries in the indexed text | 74 | 0 |
+  | Found (top 5) | 7 of 8 | 7 of 8 |
+  | No-answer rejected | 2 of 2 | 2 of 2 |
+
+  The reranker score of the answer chunk rose for 5 questions (ECC logs
+  0.358 → 0.588, memory bandwidth 0.363 → 0.503) and fell slightly for 3
+  (0.01–0.04); one answer moved from #1 to #2. The keyword part of the score
+  was the same for all 8. The miss «Как собрать gpu-burn?» stayed (reranker
+  0.075 → 0.066), so glue is not its cause. On a document of three chunks
+  ranking has little room to change; the gain is the text itself — what the
+  LLM reads and what citations show.
+- **PDFs unchanged:** the installer's sample PDF indexed before and after the
+  fix gave identical chunks.
+- **Re-parsing:** a DOCX indexed before `r7` keeps the glued text until it is
+  parsed again. The knowledge bases of this install held only PDFs.

@@ -52,7 +52,7 @@ re-check them before any version bump.
   rebuild takes the same base and data files. Recipe: [BUILD.md](BUILD.md).
 - **Published:** `0.27.2-arm64-r6` (2026-10-21),
   `sha256:16ba7dd9d03ae8d6a8d9f819e6c7e62d78874dfeb27367bbec536da02ea40fe9`,
-  the first image with all patches below. It replaces `0.27.2-arm64-r5`
+  patches 1–7; patch 8 comes with `r7`. It replaces `0.27.2-arm64-r5`
   (2026-10-20,
   `sha256:a34a9f1f1009442497f50da91691edbc1dc19dea4cea7a73c9673a0000f61375`,
   patches 1–6), `0.27.2-arm64-r4` (2026-10-19,
@@ -65,7 +65,7 @@ re-check them before any version bump.
   patches 1–2) and `0.27.2-arm64-r1` (2026-10-01,
   `sha256:1bf5fc0031bff2d775dc8bc1626b2820f9b658b43696a9bb4bdc02a8304f0660`,
   patch 1).
-- **Deviations from upstream** — seven, each applied by a script that refuses
+- **Deviations from upstream** — eight, each applied by a script that refuses
   to run if the code it expects is not there:
   1. The Chrome/ChromeDriver steps run on x86_64 only: the archives in
      `ragflow_deps` are x86 builds that cannot run on arm64. Browser-driven
@@ -92,6 +92,14 @@ re-check them before any version bump.
      `close_stale(age=30)` closed it under the worker thread, so every third
      check under Docker's 15 s health check logged a reconnect. See
      [VALIDATION.md](VALIDATION.md), section 11.
+  8. DOCX chunks keep a separator between the paragraphs they join (`r7`).
+     Upstream splits each paragraph on the dataset's delimiter, drops the
+     delimiter and joins the pieces with nothing, so the last word of one
+     paragraph ran into the first word of the next (`lm-sensorsgit`,
+     `H100nvidia`) — in what the LLM reads, in citations and in the keyword
+     index. PDFs are chunked by other code and are not affected. Documents
+     indexed before `r7` keep the glued text until they are parsed again. See
+     [VALIDATION.md](VALIDATION.md), section 13.
 - **Verified (2026-10-01):** the unmodified upstream build completed on a DGX
   Spark; with RAGFlow's own compose, the server reported `v0.27.2`, served the
   web UI, and Elasticsearch, MySQL, Valkey and the object store were healthy.
@@ -536,18 +544,15 @@ re-check them before any version bump.
 
 - **Scanned documents.** Read through vision since `r5` (D14), but measured on a
   scan made from a digital PDF only; a real scan is still to be measured.
-- **Glued lines.** When RAGFlow merges lines of a DOCX into a chunk it adds no
-  separator (`GPUКритерий`, `скоростьsudo` — 11 places in a short document),
-  which hurts keyword search.
 - **Auto-question and keyword analysis.** Both use the LLM to improve matching
   (questions generated per chunk at indexing; keywords extracted per query).
   Measure the gain against the extra time.
 - **Upstream reports.** RAGFlow defects found in stage 3 should be reported to
   the `0.27.x` branch: the reranker input (D3 patch 2), DeepDOC on Cyrillic
-  (D14), the kNN filter (D3 patch 3), the agentic-pipeline defects of D19, and
-  the health check's held connection (D3 patch 7) together with
+  (D14), the kNN filter (D3 patch 3), the agentic-pipeline defects of D19, the
+  health check's held connection (D3 patch 7) together with
   `close_stale(age=30)` itself, which closes any connection held longer than
-  30 s, a long transaction's included.
+  30 s, a long transaction's included, and the DOCX chunk join (D3 patch 8).
 - **Ultra.** The fourth level answers 7/7 on the acceptance sample (`r4`), but
   its own distinguishing feature is still untested: the knowledge-graph tool
   needs a graph built at indexing, and none of RAGSpark's question sets has

@@ -117,13 +117,13 @@ The script:
    `infiniflow/ragflow_deps:latest`, floating tags upstream — to the digests set
    in `build.sh` (those of `r4` and `r5`). This changes no code in the image;
    it makes a rebuild take the same base and data files;
-3. builds `ghcr.io/0ffch41n/ragspark-ragflow:0.27.2-arm64-r6` with OCI labels
+3. builds `ghcr.io/0ffch41n/ragspark-ragflow:0.27.2-arm64-r7` with OCI labels
    (source, version, upstream commit, license);
 4. with `--push`, pushes the image to GHCR.
 
 ## Differences from upstream
 
-Seven, each applied by a script that stops the build if the code it expects is
+Eight, each applied by a script that stops the build if the code it expects is
 not there (for example after a RAGFlow version change):
 
 1. [patch_dockerfile.py](../build/ragflow/patch_dockerfile.py) — the Chrome and
@@ -160,6 +160,11 @@ not there (for example after a RAGFlow version change):
    worker, so under Docker's 15 s health check every third check failed once
    and logged `Database connection issue (attempt 1/5): (0, '')`, about 1900
    times a day. §11.
+8. [patch_docx.py](../build/ragflow/patch_docx.py) — DOCX chunks keep a
+   newline between the pieces they join. `_merge_cks` joined the paragraphs
+   with nothing after `_build_cks` had dropped the delimiter, so every
+   paragraph boundary inside a chunk glued two words together. Chunk borders
+   do not move. §13.
 
 ## Expected warnings
 

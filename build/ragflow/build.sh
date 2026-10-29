@@ -11,11 +11,12 @@ set -euo pipefail
 RAGFLOW_REPO="https://github.com/infiniflow/ragflow.git"
 RAGFLOW_TAG="v0.27.2"
 RAGFLOW_COMMIT="a024bea0cd93f39e6652a42bf84dd20c55bc560b"
-REVISION="r6"   # bump whenever the RAGSpark patch set changes (r1: Chrome; r2: + reranker input;
+REVISION="r7"   # bump whenever the RAGSpark patch set changes (r1: Chrome; r2: + reranker input;
                 # r3: + kNN filter, agentic pipeline, Naive by default;
                 # r4: + research budget, query language, claim shapes;
                 # r5: + scans: Cyrillic text layer, vision at temperature 0, whole tables;
-                # r6: + health check returns its connection; base images pinned by digest)
+                # r6: + health check returns its connection; base images pinned by digest;
+                # r7: + DOCX chunks keep a separator between paragraphs)
 IMAGE="ghcr.io/0ffch41n/ragspark-ragflow"
 TAG="${RAGFLOW_TAG#v}-arm64-${REVISION}"
 # The images the upstream Dockerfile builds from, by floating tags there; pinned
@@ -67,6 +68,7 @@ python3 "$HERE/patch_search.py" "$src/rag/nlp/search.py"
 python3 "$HERE/patch_knn_filter.py" "$src"
 python3 "$HERE/patch_agentic.py" "$src"
 python3 "$HERE/patch_scans.py" "$src"
+python3 "$HERE/patch_docx.py" "$src"
 python3 "$HERE/patch_health.py" "$src"
 python3 "$HERE/patch_web_default.py" "$src"
 
