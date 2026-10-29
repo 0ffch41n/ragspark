@@ -50,10 +50,12 @@ re-check them before any version bump.
   The images the upstream Dockerfile builds from by floating tags
   (`ubuntu:24.04`, `infiniflow/ragflow_deps:latest`) are pinned by digest, so a
   rebuild takes the same base and data files. Recipe: [BUILD.md](BUILD.md).
-- **Published:** `0.27.2-arm64-r6` (2026-10-21),
+- **Published:** `0.27.2-arm64-r7` (2026-10-29),
+  `sha256:21c32fb9b8a54f02920f8bfc689166dbf8a6b0bc42b60a2d51baa86072f2d881`,
+  the first image with all patches below. It replaces `0.27.2-arm64-r6`
+  (2026-10-21,
   `sha256:16ba7dd9d03ae8d6a8d9f819e6c7e62d78874dfeb27367bbec536da02ea40fe9`,
-  patches 1–7; patch 8 comes with `r7`. It replaces `0.27.2-arm64-r5`
-  (2026-10-20,
+  patches 1–7), `0.27.2-arm64-r5` (2026-10-20,
   `sha256:a34a9f1f1009442497f50da91691edbc1dc19dea4cea7a73c9673a0000f61375`,
   patches 1–6), `0.27.2-arm64-r4` (2026-10-19,
   `sha256:1ed7725f5932a4799591104b5efd1d1ed7f50984e070be24ed4251d27341e0f8`,

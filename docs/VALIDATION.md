@@ -677,3 +677,6 @@ prose, Latin and Cyrillic mixed. It was indexed with the installer's settings
   fix gave identical chunks.
 - **Re-parsing:** a DOCX indexed before `r7` keeps the glued text until it is
   parsed again. The knowledge bases of this install held only PDFs.
+- **Image `r7`:** differs from `r6` in exactly `rag/nlp/__init__.py`, and that
+  file is byte for byte the one in the container measured above
+  ([BUILD.md](BUILD.md)).
