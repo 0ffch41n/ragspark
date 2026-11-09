@@ -1,0 +1,63 @@
+# LLM: Qwen 3.6 35B-A3B NVFP4 (MoE, 3B active) with multi-token prediction
+# (catalog id qwen-3.6-35b-a3b-nvfp4). About 4x faster than the default LLM;
+# weaker on multi-part answers at the upper agentic levels (Medium..Ultra).
+# Selected in .env:  COMPOSE_FILE=compose.yaml:llm/qwen-3.6-35b-a3b-nvfp4.yaml
+#
+# Flags and measurements: catalog/models.yaml.
+
+services:
+  vllm-llm:
+    image: vllm/vllm-openai:v0.27.1-aarch64@sha256:1c8e60a0841b333c700488cb029d3664807249da0c071e862191b00fe34b228c
+    environment:
+      CUTE_DSL_ARCH: sm_121a            # GB10 target for the b12x MoE kernels (checkpoint card)
+    command:
+      - vllm
+      - serve
+      - unsloth/Qwen3.6-35B-A3B-NVFP4-Fast
+      - --revision                      # the validated snapshot; the installer downloads this one
+      - 1c3f884bc99aac2524f6d49bcbac8c88401afd66
+      - --served-model-name
+      - qwen3.6-35b-a3b
+      - --gpu-memory-utilization
+      - "0.50"
+      - --max-model-len
+      - "65536"
+      - --max-num-batched-tokens
+      - "8192"                          # MTP otherwise caps the batch at 2048 tokens
+      - --kv-cache-dtype
+      - fp8
+      # NVFP4 experts on the SM12x kernels. vLLM leaves them out of the automatic
+      # choice on GB10 and picks a CUTLASS path the checkpoint card calls 2x slower.
+      - --moe-backend
+      - flashinfer_b12x
+      - --reasoning-parser
+      - qwen3
+      - --enable-auto-tool-choice
+      - --tool-call-parser
+      - qwen3_xml
+      # The MTP draft layer is bf16, which b12x does not support: without its own
+      # "auto" it inherits --moe-backend and vLLM refuses to start. MTP 3 measured
+      # faster than 2 for a single user and equal at 8 parallel requests.
+      - --speculative-config
+      - '{"method":"mtp","num_speculative_tokens":3,"moe_backend":"auto"}'
+      - --default-chat-template-kwargs
+      - '{"enable_thinking": false}'    # RAGFlow does not send it; thinking costs ~10x time
+      # Defaults for requests that do not set their own. max_new_tokens is the
+      # answer-length limit: RAGFlow strips max_tokens from its requests, so
+      # without it a looping generation runs until the 64k context is full.
+      - --override-generation-config
+      - '{"temperature": 0.7, "top_p": 0.8, "top_k": 20, "max_new_tokens": 8192}'
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=5)"]
+      interval: 20s
+      timeout: 10s
+      retries: 3
+      start_period: 30m                 # ~7 min with cached weights (MTP + CUDA graphs)
+
+  # What tools/ragflow_models.py registers in RAGFlow for this LLM.
+  ragflow:
+    environment:
+      RAGSPARK_LLM_NAME: qwen3.6-35b-a3b
+      RAGSPARK_LLM_CONTEXT: "65536"
+      RAGSPARK_LLM_TOOLS: "1"
+      RAGSPARK_LLM_VISION: "1"          # vision tower in the checkpoint, vLLM serves images: parses scans

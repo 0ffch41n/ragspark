@@ -147,6 +147,51 @@ class WeightsCheck(unittest.TestCase):
         self.assertEqual(install.model_repos(cfg), [("org/embed", ""), ("org/llm", "abc123")])
 
 
+class LlmChoice(unittest.TestCase):
+    """The LLM an install takes without a question is the catalog's default, not the first file name."""
+
+    def source(self, files, catalog):
+        root = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, root, ignore_errors=True)
+        os.makedirs(os.path.join(root, "compose", "llm"))
+        for name in files:
+            open(os.path.join(root, "compose", "llm", name + ".yaml"), "w").close()
+        if catalog is not None:
+            os.makedirs(os.path.join(root, "catalog"))
+            with open(os.path.join(root, "catalog", "models.yaml"), "w", encoding="utf-8") as f:
+                f.write(catalog)
+        return root
+
+    def choices(self, files, catalog):
+        from unittest import mock
+        with mock.patch.object(install.paths, "SOURCE_ROOT", self.source(files, catalog)):
+            return install.llm_choices(), install.catalog_default("llm")
+
+    def test_catalog_default_comes_first(self):
+        catalog = ("models:\n  llm:            # the list, not the default\n    - id: a-model\n"
+                   "defaults:\n  embedding: e\n  llm: b-model    # comment\n  rerank: r\n")
+        self.assertEqual(self.choices(["a-model", "b-model", "c-model"], catalog),
+                         (["b-model", "a-model", "c-model"], "b-model"))
+
+    def test_without_a_usable_default_the_files_stay_sorted(self):
+        files = ["b-model", "a-model"]
+        self.assertEqual(self.choices(files, None), (["a-model", "b-model"], None))
+        self.assertEqual(self.choices(files, "defaults:\n  llm: gone\n"), (["a-model", "b-model"], "gone"))
+        self.assertEqual(self.choices(files, "defaults:\n  embedding: e\n"), (["a-model", "b-model"], None))
+
+    def test_repository_catalog_and_llm_files_agree(self):
+        with open(os.path.join(ROOT, "catalog", "models.yaml"), encoding="utf-8") as f:
+            catalog = f.read()
+        referenced = set(re.findall(r"^\s+compose: compose/llm/([^\s#]+)\.yaml", catalog, re.M))
+        files = {os.path.splitext(os.path.basename(p))[0]
+                 for p in glob.glob(os.path.join(ROOT, "compose", "llm", "*.yaml"))}
+        self.assertEqual(referenced, files)                                # every LLM file is in the catalog
+        ids = set(re.findall(r"^\s+- id: (\S+)", catalog, re.M))
+        self.assertTrue(files <= ids, files - ids)                          # file name == catalog id
+        self.assertEqual(install.llm_choices()[0], install.catalog_default("llm"))
+        self.assertEqual(install.catalog_default("llm"), "qwen-3.8-27b-nvfp4")
+
+
 @unittest.skipUnless(os.environ.get("RAGSPARK_TEST_COMPOSE"), "set RAGSPARK_TEST_COMPOSE to a compose binary")
 class EndToEnd(unittest.TestCase):
     """install -> status -> uninstall in a scratch prefix with fake docker/systemctl/nvidia-smi."""

@@ -72,6 +72,33 @@ models:
         min_p and logit_bias are ignored with speculative decoding.
         Add "Answer only in Russian" to the assistant prompt as a safeguard.
 
+    - id: qwen-3.6-35b-a3b-nvfp4
+      hf_repo: unsloth/Qwen3.6-35B-A3B-NVFP4-Fast   # MoE 35B, 3B active; NVFP4 experts, FP8 attention and lm_head
+      served_name: qwen3.6-35b-a3b
+      modes: [single]
+      compose: compose/llm/qwen-3.6-35b-a3b-nvfp4.yaml   # image, flags: b12x MoE kernels, MTP 3, thinking off, fp8 KV cache
+      memory_share: 0.50                # of unified memory; weights ~22 GiB, the rest KV cache (~1.4M tokens)
+      context:
+        default: 65536
+      tool_calling: true
+      vision: true                      # vision tower in the checkpoint; parses scans as ragspark-vision (D14)
+      serving_verified: "2026-10-29 DGX OS 7.6.0, driver 580.178.04, CUDA 13.0"
+      measured:                         # 2026-10-29, same harness and RAGFlow sample as the default LLM; its numbers in parentheses
+        decode_tok_s_single: 107.6      # MTP 3, 1k context (27.2); 102.8 at 8k (26.0), first token at 8k 1.4 s (6.4)
+        concurrency_8: "all OK, ~366 tok/s aggregate (137)"
+        startup_min: 7                  # weights cached; MTP + CUDA graph capture
+        language_mixing: "0 of 30 probe answers"
+        chat_levels: "Naive 7/7, Low 7/7, Medium 6/7, High 6/7, Ultra 5/7 (7/7 at every level); no-answer question 1/1 at every level"
+        scan_4_pages_s: 27              # via ragspark-vision, Cyrillic share 0.885, 0 garbled words (85)
+      validated: false                  # sample and MSI manual through RAGFlow passed (2026-10-29); formal test pending
+      license: "Apache-2.0 (checkpoint card and base model Qwen/Qwen3.6-35B-A3B, checked 2026-10-29)"
+      note: >-
+        The fast choice: about 4x the default LLM's speed, same answers in
+        Naive and Low (the default chat level). At Medium and above it more
+        often gives only part of a two-part answer.
+        CUTE_DSL_ARCH=sm_121a and --moe-backend flashinfer_b12x are required
+        for its speed; the MTP drafter keeps moe_backend auto.
+
     - id: nemotron-3-super-120b-a12b-nvfp4
       hf_repo: nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-NVFP4
       modes: [single]

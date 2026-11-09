@@ -92,9 +92,37 @@ print("COMPLETE", path)
 '''
 
 
+def catalog_default(kind):
+    """`defaults: <kind>:` of catalog/models.yaml, or None. Read line by line:
+    the host Python has no YAML library."""
+    try:
+        with open(os.path.join(paths.SOURCE_ROOT, "catalog", "models.yaml"), encoding="utf-8") as f:
+            lines = f.read().splitlines()
+    except OSError:
+        return None
+    inside = False
+    for line in lines:
+        if not line.strip() or line.lstrip().startswith("#"):
+            continue
+        if not line[0].isspace():
+            inside = line.split("#")[0].strip() == "defaults:"
+            continue
+        key, sep, value = line.split("#")[0].strip().partition(":")
+        if inside and sep and key == kind:
+            return value.strip() or None
+    return None
+
+
 def llm_choices():
+    """LLM files in compose/llm/ without .yaml; the catalog's default LLM first:
+    it is what --yes and an install without a terminal take."""
     files = sorted(glob.glob(os.path.join(paths.SOURCE_ROOT, "compose", "llm", "*.yaml")))
-    return [os.path.splitext(os.path.basename(f))[0] for f in files]
+    names = [os.path.splitext(os.path.basename(f))[0] for f in files]
+    default = catalog_default("llm")
+    if default in names:
+        names.remove(default)
+        names.insert(0, default)
+    return names
 
 
 def gather_config(args, manifest):
