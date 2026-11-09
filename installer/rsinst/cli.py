@@ -6,7 +6,7 @@ import sys
 from . import ui
 from .manifest import Manifest
 
-COMMANDS = ["install", "check", "status", "start", "stop", "restart", "logs", "acceptance", "uninstall", "prestart"]
+COMMANDS = ["install", "check", "status", "start", "stop", "restart", "logs", "llm", "acceptance", "uninstall", "prestart"]
 
 
 def _common(suppress):
@@ -53,6 +53,8 @@ def build_parser():
     lg = sub.add_parser("logs", parents=[common], help="follow container logs")
     lg.add_argument("service", nargs="?", help="ragflow, vllm-llm, vllm-embed, vllm-rerank, es01, mysql, ...")
     lg.add_argument("--tail", type=int, default=100)
+    ll = sub.add_parser("llm", parents=[common], help="show the language model or change it")
+    ll.add_argument("name", nargs="?", help="LLM file in compose/llm/ without .yaml, or its number in the list")
     sub.add_parser("acceptance", parents=[common], help="run the acceptance test again")
     sub.add_parser("prestart", parents=[common])          # used by the systemd unit
     u = sub.add_parser("uninstall", parents=[common], help="remove RAGSpark and all its data")
@@ -82,12 +84,12 @@ def main(argv=None):
         choice = ui.ask("Language / Язык (ru, en)", lang)
         ui.set_lang(choice if choice in ("ru", "en") else lang)
 
-    from . import control, install, uninstall
+    from . import control, install, switch, uninstall
     handlers = {
         "install": install.install, "uninstall": uninstall.uninstall,
         "check": control.check, "status": control.status, "start": control.start,
         "stop": control.stop, "restart": control.restart, "logs": control.logs,
-        "acceptance": control.acceptance, "prestart": control.prestart,
+        "acceptance": control.acceptance, "prestart": control.prestart, "llm": switch.llm,
     }
     try:
         return handlers[args.command](args)

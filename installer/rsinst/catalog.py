@@ -83,12 +83,13 @@ def facts(e, total_gib):
     return " · ".join(parts)
 
 
-def menu(cat, choices, files, total_gib):
+def menu(cat, choices, files, total_gib, current=None):
     """Menu lines: every offered LLM with its facts and summary, choices[0] marked as the
-    default, then the catalog LLMs that cannot be installed yet."""
+    default (or `current` as the running one), then the catalog LLMs that cannot be installed yet."""
+    marks = {current: ui.t("llm_now")} if current else {choices[0]: ui.t("llm_default")} if choices else {}
     lines = [ui.t("llm_menu_title")]
     for number, name in enumerate(choices, start=1):
-        lines.append("  %d) %s%s" % (number, name, " — " + ui.t("llm_default") if number == 1 else ""))
+        lines.append("  %d) %s%s" % (number, name, " — " + marks[name] if name in marks else ""))
         e = entry(cat, "llm", name)
         if e is None:
             lines.append("     " + ui.t("llm_no_record"))

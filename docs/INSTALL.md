@@ -223,6 +223,7 @@ answer" text. Background: D19 in [DECISIONS.md](DECISIONS.md).
 | `sudo ragspark stop` | stop; data is kept. The stack starts again at the next boot |
 | `sudo ragspark restart` | stop and start, about 10 minutes |
 | `sudo ragspark logs [service] [--tail N]` | follow the logs: `ragflow`, `vllm-llm`, `vllm-embed`, `vllm-rerank`, `es01`, `mysql`, `minio`, `redis` |
+| `sudo ragspark llm [name]` | show the LLM, or change it: the chat waits about 7–10 minutes, the web interface about a minute; see [COMPOSE.md](COMPOSE.md), *Changing the LLM* |
 | `sudo ragspark acceptance` | run the acceptance test again |
 | `sudo ragspark check [--gpu-reload]` | system check; see *GPU after a systemd reload* |
 | `sudo ragspark uninstall` | remove; see *Uninstall* |

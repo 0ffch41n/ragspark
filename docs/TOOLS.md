@@ -39,13 +39,25 @@ upload; a spec entry with `"default": false` behaves the same way.
 |---|---|
 | `[OK]` | already as expected |
 | `[TODO]` | would be changed (`--check` only) |
-| `[SET]` | a default model was (re)assigned |
+| `[SET]` | a default model, a chat or a dataset was (re)assigned |
 | `[FAIL]` | needs attention; exit code 1 |
 
-Existing instances are never modified. If an instance points to a different
-address, the script reports it and leaves it alone. A default that refers to a
-deleted model (it happens after an instance is deleted and re-created) is
-detected by model id and re-assigned.
+An instance's address is never changed: if it points to a different address,
+the script reports it and leaves it alone. A default that refers to a deleted
+model (it happens after an instance is deleted and re-created) is detected by
+model id and re-assigned.
+
+The chat and vision instances serve the model of the current LLM file. When one
+holds another model — after `sudo ragspark llm` changed the LLM file — the
+current model is added to it (or enabled again), the default model, the chats
+and the datasets and documents that parse scans with the old model move to it,
+and the old model is disabled. Chats of other instances are left alone, and
+nothing is parsed again. A document keeps its RAPTOR settings: RAGFlow's API
+leaves them out of its records and deletes them on an update without them, so
+the script reads them through RAGFlow's own services in the container and sends
+them back unchanged; a document whose settings cannot be read is not changed
+(`[FAIL]`). The embedding and rerank models are never changed in
+place: the script reports `[FAIL]` instead.
 
 ## acceptance.py — acceptance test
 

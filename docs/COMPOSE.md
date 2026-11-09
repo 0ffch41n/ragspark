@@ -110,10 +110,35 @@ installer's systemd unit stops those and starts the stack in order
 
 ## Changing the LLM
 
-Point `COMPOSE_FILE` in `.env` at another file in `compose/llm/` and run
-`sudo docker compose up -d --wait`, then `tools/ragflow_models.py` to register
-the new model. Today the directory holds the default model only; more come
-with stage 4.
+`sudo ragspark llm` shows the running LLM and the others; `sudo ragspark llm
+<name>` changes it ([INSTALL.md](INSTALL.md), *Commands*). The command does,
+in this order:
+
+1. downloads the new LLM's image and weights if they are missing, while the
+   chat keeps answering;
+2. points `COMPOSE_FILE` in `.env` at the new file, stops `vllm-llm`, drops the
+   page cache and starts the new LLM alone (`up --no-deps vllm-llm`). On DGX
+   Spark vLLM sizes its memory share from free memory, and the cache of weights
+   just read hides it. RAGFlow keeps running meanwhile. If the new LLM does not
+   become healthy, the previous file is started again. Once it is ready,
+   `docker compose up -d --wait` recreates `ragflow`, whose environment names
+   the model; `ragflow` depends on `vllm-llm`, so a plain `up` would keep it
+   down for the whole start of the LLM;
+3. runs `tools/ragflow_models.py`: the new model joins the `ragspark-llm` and
+   `ragspark-vision` instances, the default chat model, every chat and every
+   dataset and document that parses scans with the old model move to it, and
+   the old model is disabled — RAGFlow cannot rename a model, and chats refer to
+   it by its record id. Nothing is parsed again;
+4. runs the acceptance test.
+
+The chat does not answer for about 7–10 minutes, while the new LLM starts; the
+web interface, the datasets and search keep working, except for about a minute
+while `ragflow` restarts.
+Switching back is the same command with the old name; its weights stay on
+disk. The command uses the LLM files of the installed copy in `/opt/ragspark`:
+a model added to the repository later is available once those files are
+updated. The embedding and rerank models cannot be changed this way: every
+dataset's search index was built with the embedding model.
 
 ## Data
 

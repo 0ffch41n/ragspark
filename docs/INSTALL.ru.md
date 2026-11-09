@@ -223,6 +223,7 @@ Naive достаточно, когда ответ находится в одно
 | `sudo ragspark stop` | остановить; данные сохраняются. При следующей загрузке стек запустится снова |
 | `sudo ragspark restart` | остановить и запустить, около 10 минут |
 | `sudo ragspark logs [сервис] [--tail N]` | журналы: `ragflow`, `vllm-llm`, `vllm-embed`, `vllm-rerank`, `es01`, `mysql`, `minio`, `redis` |
+| `sudo ragspark llm [имя]` | показать LLM или сменить её: чат ждёт около 7–10 минут, веб-интерфейс — около минуты; см. [COMPOSE.ru.md](COMPOSE.ru.md), «Смена LLM» |
 | `sudo ragspark acceptance` | повторить приёмочную проверку |
 | `sudo ragspark check [--gpu-reload]` | проверка системы; см. «GPU после перезагрузки systemd» |
 | `sudo ragspark uninstall` | удаление; см. «Удаление» |

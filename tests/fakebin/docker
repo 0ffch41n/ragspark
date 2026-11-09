@@ -74,12 +74,24 @@ if args[:1] == ["run"]:
     out("")
 if args[:1] == ["compose"]:
     sub = args[1:]
+    files = []
+    while sub[:1] == ["-f"]:                   # compose -f a -f b <command>: the files instead of .env's
+        files += sub[:2]
+        sub = sub[2:]
     if sub[:1] == ["version"]:
         out("2.39.4")
     if sub[:1] == ["config"]:
-        p = subprocess.run([os.environ["FAKE_COMPOSE"]] + sub)
+        p = subprocess.run([os.environ["FAKE_COMPOSE"]] + files + sub)
         sys.exit(p.returncode)
     if sub[:1] == ["up"]:
+        # "up_fails_for": an LLM file name whose start fails (the COMPOSE_FILE of .env in the cwd);
+        # "stack_fails_for": with that file the LLM starts (`up --no-deps vllm-llm`) but a full `up` fails
+        env = dict(l.strip().split("=", 1) for l in open(".env") if "=" in l and not l.startswith("#")) \
+            if os.path.exists(".env") else {}
+        if s.get("up_fails_for") and s["up_fails_for"] in env.get("COMPOSE_FILE", ""):
+            out("Container ragspark-vllm-llm-1 Error: unhealthy", 1)
+        if s.get("stack_fails_for") and s["stack_fails_for"] in env.get("COMPOSE_FILE", "") and "--no-deps" not in sub:
+            out("Container ragspark-ragflow-1 Error: unhealthy", 1)
         s["containers"] = True; save(s)
         out("Container ragspark-ragflow-1 Healthy")
     if sub[:1] == ["exec"]:

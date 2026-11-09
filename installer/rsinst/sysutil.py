@@ -60,12 +60,13 @@ def version_tuple(text):
 
 
 def compose(args, capture=True, stdin=None, timeout=None):
-    """docker compose in the installed compose directory (.env picks the files).
+    """docker compose in the installed compose directory (.env picks the files,
+    unless `-f` options come first).
 
     The output of `config` is never logged: it contains the passwords from .env.
     """
     return run(["docker", "compose"] + args, capture=capture, cwd=paths.compose_dir(),
-               stdin=stdin, timeout=timeout, log_output=args[:1] != ["config"])
+               stdin=stdin, timeout=timeout, log_output="config" not in args)
 
 
 def compose_json(args):

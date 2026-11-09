@@ -260,8 +260,8 @@ def step_settings(config):
     return True
 
 
-def compose_config():
-    code, out = compose(["config", "--format", "json"])
+def compose_config(files=()):
+    code, out = compose(list(files) + ["config", "--format", "json"])
     if code != 0:
         return None
     try:
@@ -270,8 +270,13 @@ def compose_config():
         return None
 
 
-def step_images(manifest):
-    code, out = compose(["config", "--images"])
+def llm_files(llm):
+    """compose -f options for `llm` instead of the files .env names (`ragspark llm`)."""
+    return ["-f", "compose.yaml", "-f", "llm/%s.yaml" % llm]
+
+
+def step_images(manifest, files=()):
+    code, out = compose(list(files) + ["config", "--images"])
     if code != 0:
         ui.status("FAIL", ui.t("compose_invalid", err=out.strip()[-300:]))
         return False
