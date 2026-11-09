@@ -35,6 +35,13 @@ weights (`/srv/ragspark/hf-cache`) and, when there is more than one, the LLM.
 Then it checks the system, shows what it is going to create and asks for
 confirmation. Nothing on the machine changes before that.
 
+The LLM menu comes from [catalog/models.yaml](../catalog/models.yaml): speed
+for one user, context, memory, tools and vision, license, and whether the model
+passed the acceptance test (*validated*) or not yet (*experimental*). Enter its
+number or name; Enter takes the default, which `--yes` takes as well. The plan
+lists every model to be downloaded with its license. `./install.sh --llm list`
+prints the menu without installing anything.
+
 With the weights already downloaded the installation takes about 15 minutes,
 10 of which the models need to start. A first install also downloads about
 60 GB.
@@ -52,7 +59,7 @@ sudo ./install.sh --yes --lang en --admin-email admin@example.com --http-port 80
 | `--admin-email` | superuser e-mail |
 | `--http-port`, `--http-bind` | web port and the address it listens on (default `0.0.0.0`) |
 | `--models-dir` | directory for model weights |
-| `--llm` | LLM file from `compose/llm/`, without `.yaml` |
+| `--llm` | LLM file from `compose/llm/`, without `.yaml`; `--llm list` shows the models |
 | `--skip-acceptance` | skip the acceptance test; the chat "Assistant" is still created |
 | `--no-network` | skip the registry latency check |
 | `--force` | go on despite failed checks (see *Checks*) |

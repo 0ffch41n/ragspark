@@ -120,6 +120,18 @@ def set_env(path, key, value):
     os.replace(tmp, path)
 
 
+def mem_total_gib():
+    """MemTotal from /proc/meminfo in GiB (the unified memory on DGX Spark); 0 when unreadable."""
+    try:
+        with open("/proc/meminfo") as f:
+            for line in f:
+                if line.startswith("MemTotal:"):
+                    return int(line.split()[1]) / 1024 / 1024
+    except (OSError, ValueError, IndexError):
+        pass
+    return 0
+
+
 def host_address():
     """The address of the default route, for the URL shown to the user.
 

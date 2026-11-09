@@ -11,7 +11,7 @@ import sys
 import time
 
 from . import paths, ui
-from .sysutil import project_containers, run, version_tuple
+from .sysutil import mem_total_gib, project_containers, run, version_tuple
 
 MIN_DOCKER = (24, 0, 0)
 MIN_COMPOSE = (2, 24, 0)
@@ -83,14 +83,7 @@ def check_gpu(r):
 
 
 def check_memory(r):
-    total = 0
-    try:
-        with open("/proc/meminfo") as f:
-            for line in f:
-                if line.startswith("MemTotal:"):
-                    total = int(line.split()[1]) / 1024 / 1024
-    except OSError:
-        pass
+    total = mem_total_gib()
     if total >= 110:
         r.add("OK", ui.t("pf_mem_ok", gib=total))
     elif total >= 90:

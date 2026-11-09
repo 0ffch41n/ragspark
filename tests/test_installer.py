@@ -192,6 +192,141 @@ class LlmChoice(unittest.TestCase):
         self.assertEqual(install.catalog_default("llm"), "qwen-3.8-27b-nvfp4")
 
 
+try:
+    import yaml  # noqa: F401  (python3-yaml, part of DGX OS)
+    HAVE_YAML = True
+except ImportError:
+    HAVE_YAML = False
+
+SAMPLE = {"models": {"llm": [
+    {"id": "fast", "modes": ["single"], "measured": {"decode_tok_s_single": 107.6}, "context": {"default": 65536},
+     "memory_share": 0.5, "tool_calling": True, "vision": True, "license": "Apache-2.0 (checked)",
+     "validated": True, "summary": {"en": "Fast.", "ru": "Быстрая."}},
+    {"id": "bare", "modes": ["single"], "license": "TBD", "validated": False},
+    {"id": "pair", "modes": ["stack"]},
+    {"id": "later", "modes": ["single"]}],
+    "embedding": [{"id": "emb", "hf_repo": "org/emb", "license": "MIT (card)"}],
+    "rerank": [{"id": "rr", "hf_repo": "org/rr"}]},
+    "defaults": {"llm": "fast", "embedding": "emb", "rerank": "rr"}}
+
+
+class CatalogMenu(unittest.TestCase):
+    """The LLM menu and the license lines the installer prints from the catalog (D9)."""
+
+    def setUp(self):
+        from rsinst import catalog, ui
+        self.catalog, self.ui = catalog, ui
+        self.addCleanup(ui.set_lang, ui.lang())
+
+    def test_menu_in_both_languages(self):
+        files = ["fast", "bare", "pair", "nofile"]
+        choices = self.catalog.offered(SAMPLE, files)
+        self.assertEqual(choices, ["fast", "bare", "nofile"])               # "pair" is stack-only
+        self.ui.set_lang("ru")
+        self.assertEqual(self.catalog.menu(SAMPLE, choices, files, 121.7), [
+            "Языковая модель:",
+            "  1) fast — по умолчанию",
+            "     108 ток/с · контекст 64k · память ~61 GiB · инструменты, зрение · Apache-2.0 · проверена",
+            "     Быстрая.",
+            "  2) bare",
+            "     лицензия не проверена · экспериментальная",
+            "  3) nofile",
+            "     нет записи в каталоге",
+            "  В каталоге, но ещё не готовы к установке: later"])
+        self.ui.set_lang("en")
+        lines = self.catalog.menu(SAMPLE, choices, files, 0)                 # memory unknown: not shown
+        self.assertEqual(lines[1:4], ["  1) fast — default",
+                                      "     108 tok/s · context 64k · tools, vision · Apache-2.0 · validated",
+                                      "     Fast."])
+
+    def test_pick_by_number_or_name(self):
+        choices = ["a", "b"]
+        for answer, expected in (("1", "a"), (" 2 ", "b"), ("b", "b"), ("3", None), ("0", None),
+                                 ("c", None), ("", None)):
+            self.assertEqual(self.catalog.pick(answer, choices), expected, answer)
+
+    def test_plan_lines_show_every_license(self):
+        self.ui.set_lang("en")
+        self.assertEqual(self.catalog.plan_lines(SAMPLE, "fast"), [
+            "Models and their licenses:", "  LLM: fast — Apache-2.0",
+            "  embeddings: org/emb — MIT", "  reranker: org/rr — license not checked"])
+        self.assertEqual(self.catalog.plan_lines(None, "fast"),
+                         ["Model licenses: see catalog/models.yaml (it could not be read)"])
+
+    def test_menu_asks_again_after_a_bad_answer(self):
+        import io
+        from contextlib import redirect_stdout
+        from unittest import mock
+        self.ui.set_lang("en")
+        out = io.StringIO()
+        with mock.patch.object(self.ui, "ask", side_effect=["9", "x", "2"]), redirect_stdout(out):
+            self.assertEqual(install.choose_llm(SAMPLE, ["fast", "bare"], ["fast", "bare"]), "bare")
+        self.assertEqual(out.getvalue().count("Enter a number from 1 to 2 or a model name"), 2)
+
+    def test_without_pyyaml_a_plain_list_with_the_default(self):
+        import io
+        from contextlib import redirect_stdout
+        from unittest import mock
+        self.ui.set_lang("en")
+        with mock.patch.dict(sys.modules, {"yaml": None}):                  # import yaml -> ImportError
+            self.assertIsNone(self.catalog.load())
+            out = io.StringIO()
+            with redirect_stdout(out):
+                self.assertEqual(install.list_llms(), 0)
+                picked = install.choose_llm(None, install.llm_choices(), install.llm_choices())
+        self.assertEqual(picked, "qwen-3.8-27b-nvfp4")                      # no terminal: the default
+        self.assertIn("could not be read", out.getvalue())
+        self.assertIn("  1) qwen-3.8-27b-nvfp4", out.getvalue())
+
+    @unittest.skipUnless(HAVE_YAML, "PyYAML not installed")
+    def test_repository_catalog_matches_the_llm_files(self):
+        cat = self.catalog.load()
+        self.assertIsNotNone(cat)
+        files = install.llm_choices()
+        self.assertEqual(self.catalog.offered(cat, files), files)           # all single-mode today
+        self.assertEqual(self.catalog.not_ready(cat, files),
+                         ["gemma-4-26b-a4b", "nemotron-3-super-120b-a12b-nvfp4", "gpt-oss-120b"])
+        for name in files:
+            with open(os.path.join(ROOT, "compose", "llm", name + ".yaml"), encoding="utf-8") as f:
+                svc = yaml.safe_load(f)["services"]
+            cmd, env = svc["vllm-llm"]["command"], svc["ragflow"]["environment"]
+            arg = lambda flag: cmd[cmd.index(flag) + 1]                     # noqa: E731
+            e = self.catalog.entry(cat, "llm", name)
+            self.assertEqual(e["hf_repo"], arg("serve"), name)
+            self.assertEqual(e["served_name"], arg("--served-model-name"), name)
+            self.assertEqual(e["served_name"], env["RAGSPARK_LLM_NAME"], name)
+            self.assertEqual(e["memory_share"], float(arg("--gpu-memory-utilization")), name)
+            self.assertEqual(e["context"]["default"], int(arg("--max-model-len")), name)
+            self.assertEqual(e["tool_calling"], env["RAGSPARK_LLM_TOOLS"] == "1", name)
+            self.assertEqual(e["vision"], env["RAGSPARK_LLM_VISION"] == "1", name)
+            self.assertTrue(e["summary"]["en"].strip() and e["summary"]["ru"].strip(), name)
+            self.assertNotIn(self.catalog.license_short(e), ("", "TBD", self.ui.t("llm_license_unknown")), name)
+            self.assertIsInstance(e["validated"], bool, name)
+        with open(os.path.join(ROOT, "compose", "compose.yaml"), encoding="utf-8") as f:
+            base = yaml.safe_load(f)["services"]
+        for kind, service in (("embedding", "vllm-embed"), ("rerank", "vllm-rerank")):
+            e = self.catalog.entry(cat, kind, cat["defaults"][kind])
+            cmd = base[service]["command"]
+            self.assertEqual(e["hf_repo"], cmd[cmd.index("serve") + 1], kind)
+            self.assertNotEqual(self.catalog.license_short(e), self.ui.t("llm_license_unknown"), kind)
+
+
+class LlmList(unittest.TestCase):
+    def test_list_needs_no_root_and_writes_nothing(self):
+        tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, tmp, ignore_errors=True)
+        env = dict(os.environ, RAGSPARK_PREFIX=tmp)
+        env.pop("RAGSPARK_ALLOW_NONROOT", None)
+        p = subprocess.run([sys.executable, "-B", os.path.join(ROOT, "installer", "ragspark.py"),
+                            "install", "--llm", "list", "--lang", "en"],
+                           env=env, capture_output=True, text=True, stdin=subprocess.DEVNULL)
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        for name in install.llm_choices():
+            self.assertIn(name, p.stdout)
+        self.assertIn("sudo ./install.sh --llm <name>", p.stdout)
+        self.assertEqual(os.listdir(tmp), [])
+
+
 @unittest.skipUnless(os.environ.get("RAGSPARK_TEST_COMPOSE"), "set RAGSPARK_TEST_COMPOSE to a compose binary")
 class EndToEnd(unittest.TestCase):
     """install -> status -> uninstall in a scratch prefix with fake docker/systemctl/nvidia-smi."""
@@ -229,6 +364,13 @@ class EndToEnd(unittest.TestCase):
         self.assertEqual(m["config"]["lang"], "ru")
         self.assertEqual(len(m["images_pulled"]), 5)                      # es, mysql, silo, valkey, ragflow
         self.assertEqual(sorted(m["models_downloaded"]), ["BAAI/bge-reranker-v2-m3", "unsloth/Qwen3.8-27B-NVFP4"])
+        if HAVE_YAML:                                                      # the catalog menu, then licenses in the plan
+            self.assertIn("  1) qwen-3.8-27b-nvfp4 — по умолчанию", out)
+            self.assertIn("  2) qwen-3.6-35b-a3b-nvfp4", out)
+            self.assertLess(out.index("Языковая модель:"), out.index("Модели и их лицензии:"))
+            for line in ("LLM: unsloth/Qwen3.8-27B-NVFP4 — Apache-2.0", "эмбеддинги: deepvk/USER-bge-m3 — Apache-2.0",
+                         "реранкер: BAAI/bge-reranker-v2-m3 — Apache-2.0"):
+                self.assertIn(line, out)
         revisions = json.load(open(self.state))["weights_revisions"]       # every model pinned to a commit
         self.assertEqual(len(revisions), 3)
         for repo, rev in revisions.items():
@@ -267,6 +409,23 @@ class EndToEnd(unittest.TestCase):
         self.assertEqual(sorted(os.listdir(hub)), ["models--deepvk--USER-bge-m3"])   # pre-existing kept
         left = json.load(open(self.state))["images"]
         self.assertEqual(len(left), 1)                                     # only the pre-existing vLLM image
+
+    def test_install_with_the_alternative_llm(self):
+        code, out = self.ragspark("install", "--yes", "--force", "--no-network", "--models-dir", "/srv/ragspark/hf-cache",
+                                  "--llm", "qwen-3.6-35b-a3b-nvfp4")
+        self.assertEqual(code, 0, out)
+        inst = os.path.join(self.tmp, "opt", "ragspark")
+        m = json.load(open(os.path.join(inst, "manifest.json")))
+        self.assertEqual(m["config"]["llm"], "qwen-3.6-35b-a3b-nvfp4")
+        self.assertEqual(sorted(m["models_downloaded"]),
+                         ["BAAI/bge-reranker-v2-m3", "unsloth/Qwen3.6-35B-A3B-NVFP4-Fast"])
+        revisions = json.load(open(self.state))["weights_revisions"]
+        self.assertEqual(revisions["unsloth/Qwen3.6-35B-A3B-NVFP4-Fast"], "1c3f884bc99aac2524f6d49bcbac8c88401afd66")
+        env = sysutil.read_env(os.path.join(inst, "compose", ".env"))
+        self.assertEqual(env["COMPOSE_FILE"], "compose.yaml:llm/qwen-3.6-35b-a3b-nvfp4.yaml")
+        self.assertNotIn("Языковая модель:", out)                          # --llm given: no menu
+        if HAVE_YAML:
+            self.assertIn("LLM: unsloth/Qwen3.6-35B-A3B-NVFP4-Fast — Apache-2.0", out)
 
     def set_state(self, **kw):
         with open(self.state) as f:

@@ -1,18 +1,26 @@
-# RAGSpark model catalog - DRAFT, schema 1
+# RAGSpark model catalog, schema 1
 #
 # Runnable entries point to a compose file (`compose:`). That file is the
 # source of truth for the image, its digest, the weights revision (`--revision`,
 # a commit of the Hugging Face repository) and the vLLM flags; the catalog
-# keeps what the wizard shows and what was measured. Candidates without a
+# keeps what the installer shows and what was measured. Candidates without a
 # compose file record what is known so far.
+#
+# The installer reads this file (installer/rsinst/catalog.py): its LLM menu
+# lists the runnable entries that support the mode being installed, with
+# speed, context, memory, license and status; `install --llm list` prints it.
 #
 # Field meanings:
 #   serving_verified  vLLM served this model on real DGX Spark hardware with
 #                     exactly this image and these flags (facts recorded below)
 #   validated         passed the RAGSpark acceptance test (document upload ->
-#                     question -> cited answer). Stays false until stage 3.
-#   license           must be checked on the model card before release; the
-#                     wizard shows it before download
+#                     question -> cited answer) on real hardware; the installer
+#                     shows true as "validated", false as "experimental"
+#   license           checked on the model card at the pinned revision; the
+#                     part before " (" is shown in the menu and in the install
+#                     plan, before anything is downloaded
+#   summary           one line per language for the installer's menu
+#                     (runnable entries)
 #
 # Every image is pinned by digest. Never use floating tags in a release.
 
@@ -66,8 +74,11 @@ models:
         concurrency_8: "all OK, ~137 tok/s aggregate (127)"
         startup_min: 7                  # weights cached; MTP + CUDA graph capture; 5.5 with the compile cache
         language_mixing: "0 of 30 probe answers (Inferact's checkpoint: 1 of 30)"
-      validated: false                  # answered RAG questions correctly (2026-10-07); same speed under compose (2026-10-08); formal test pending
+      validated: true                   # acceptance test 2026-10-23; sample 7/7 at every chat level on the running stack 2026-10-28 (VALIDATION section 12)
       license: "Apache-2.0 (checkpoint card and base model Qwen/Qwen3.8-27B, checked 2026-10-28)"
+      summary:
+        en: The best answers at every chat level.
+        ru: Лучшие ответы на всех уровнях чата.
       note: >-
         min_p and logit_bias are ignored with speculative decoding.
         Add "Answer only in Russian" to the assistant prompt as a safeguard.
@@ -90,8 +101,11 @@ models:
         language_mixing: "0 of 30 probe answers"
         chat_levels: "Naive 7/7, Low 7/7, Medium 6/7, High 6/7, Ultra 5/7 (7/7 at every level); no-answer question 1/1 at every level"
         scan_4_pages_s: 27              # via ragspark-vision, Cyrillic share 0.885, 0 garbled words (85)
-      validated: false                  # sample and MSI manual through RAGFlow passed (2026-10-29); formal test pending
+      validated: true                   # acceptance test, sample at every chat level and the MSI manual through RAGFlow 2026-10-29
       license: "Apache-2.0 (checkpoint card and base model Qwen/Qwen3.6-35B-A3B, checked 2026-10-29)"
+      summary:
+        en: About 4x faster; at Medium and above more often answers only in part.
+        ru: Примерно в 4 раза быстрее; на уровнях Medium и выше чаще отвечает неполно.
       note: >-
         The fast choice: about 4x the default LLM's speed, same answers in
         Naive and Low (the default chat level). At Medium and above it more
@@ -132,7 +146,7 @@ models:
       memory_gb: 2
       serving_verified: "2026-10-07 on vllm/vllm-openai:v0.27.1-aarch64 (also 2026-09-30 on :gemma4-cu130)"
       validated: false
-      license: TBD
+      license: "Apache-2.0 (model card at the pinned revision, checked 2026-11-09)"
 
   rerank:
     - id: bge-reranker-v2-m3
@@ -143,7 +157,7 @@ models:
       memory_gb: 2
       serving_verified: "2026-10-07 on vllm/vllm-openai:v0.27.1-aarch64 (also 2026-09-30 on :gemma4-cu130)"
       validated: false
-      license: TBD
+      license: "Apache-2.0 (model card at the pinned revision, checked 2026-11-09)"
       note: >-
         Absolute scores are low for long, noisy chunks; RAGSpark uses
         threshold 0.1 with vector weight 0.7 (see docs/VALIDATION.md).

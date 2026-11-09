@@ -6,10 +6,10 @@ import shutil
 import sys
 import time
 
-from . import paths, ui
+from . import catalog, paths, ui
 from .manifest import Manifest, make_dirs
 from .preflight import run_checks
-from .sysutil import compose, host_address, project_containers, read_env, run, set_env
+from .sysutil import compose, host_address, mem_total_gib, project_containers, read_env, run, set_env
 
 TOTAL = 11
 DEFAULT_EMAIL = "admin@ragspark.local"
@@ -125,6 +125,42 @@ def llm_choices():
     return names
 
 
+def llm_offer():
+    """(catalog or None, every LLM file, the files offered for single mode); default first."""
+    files = llm_choices()
+    cat = catalog.load()
+    return cat, files, catalog.offered(cat, files)
+
+
+def choose_llm(cat, choices, files):
+    """The LLM menu with the catalog's facts; the answer is a number or a name.
+    Without a terminal or with --yes, ui.ask takes "1", the default."""
+    if cat is None:
+        ui.status("WARN", ui.t("llm_no_catalog"))
+        return ui.ask(ui.t("cfg_llm", choices=", ".join(choices)), choices[0])
+    for line in catalog.menu(cat, choices, files, mem_total_gib()):
+        ui.say(line)
+    while True:
+        llm = catalog.pick(ui.ask(ui.t("llm_pick"), "1"), choices)
+        if llm:
+            return llm
+        ui.say(ui.t("llm_pick_bad", n=len(choices)))
+
+
+def list_llms():
+    """`install --llm list`: the LLM menu, nothing installed."""
+    cat, files, choices = llm_offer()
+    if cat is None:
+        ui.status("WARN", ui.t("llm_no_catalog"))
+        for number, name in enumerate(choices, start=1):
+            ui.say("  %d) %s" % (number, name))
+    else:
+        for line in catalog.menu(cat, choices, files, mem_total_gib()):
+            ui.say(line)
+    ui.say("\n" + ui.t("llm_list_hint"))
+    return 0
+
+
 def gather_config(args, manifest):
     """Settings for this install: from the interrupted run, from flags or from questions."""
     if manifest is not None:
@@ -144,8 +180,8 @@ def gather_config(args, manifest):
     while not (port.isdigit() and 0 < int(port) < 65536):
         port = ui.ask(ui.t("cfg_port_bad"), "80")
     models_dir = args.models_dir or ui.ask(ui.t("cfg_models_dir"), paths.DEFAULT_MODELS_DIR)
-    choices = llm_choices()
-    llm = args.llm or (choices[0] if len(choices) == 1 else ui.ask(ui.t("cfg_llm", choices=", ".join(choices)), choices[0]))
+    cat, files, choices = llm_offer()
+    llm = args.llm or (choices[0] if len(choices) == 1 else choose_llm(cat, choices, files))
     if llm not in choices:
         raise SystemExit(ui.t("cfg_llm_bad", llm=llm, choices=", ".join(choices)))
     return {"lang": ui.lang(), "admin_email": email, "http_bind": args.http_bind or "0.0.0.0",
@@ -159,6 +195,8 @@ def show_plan(config, resume):
         ui.say("  - " + ui.t(line, dir=paths.INSTALL_DIR, models=config["models_dir"], unit=paths.UNIT_PATH,
                               cli=paths.CLI_PATH))
     ui.say("  " + ui.t("plan_settings", email=config["admin_email"], port=config["http_port"], llm=config["llm"]))
+    for line in catalog.plan_lines(catalog.load(), config["llm"]):
+        ui.say("  " + line)
     ui.say("  " + ui.t("plan_untouched"))
 
 

@@ -34,7 +34,7 @@ def build_parser():
     i.add_argument("--http-port", type=int, help="web port (default 80)")
     i.add_argument("--http-bind", help="address for the web port (default 0.0.0.0)")
     i.add_argument("--models-dir", help="model weights directory (default /srv/ragspark/hf-cache)")
-    i.add_argument("--llm", help="LLM file in compose/llm/ without .yaml")
+    i.add_argument("--llm", help="LLM file in compose/llm/ without .yaml; `--llm list` shows the models and exits")
     i.add_argument("--skip-acceptance", action="store_true", help="do not run the acceptance test")
     i.add_argument("--no-network", action="store_true", help="skip the registry latency check")
     i.add_argument("--force", action="store_true", help="continue despite failed checks")
@@ -71,6 +71,9 @@ def main(argv=None):
     lang = args.lang or (manifest.config.get("lang") if manifest else None) or ui.detect_lang()
     ui.set_lang(lang)
     ui.set_yes(args.yes)
+    if args.command == "install" and args.llm == "list":
+        from . import install                    # reads the repository only: no root, no questions
+        return install.list_llms()
     if os.geteuid() != 0 and os.environ.get("RAGSPARK_ALLOW_NONROOT") != "1":
         tool = "ragspark" if manifest is not None else "./install.sh"
         print(ui.t("need_root", cmd="sudo " + " ".join([tool] + sys.argv[1:])), file=sys.stderr)
