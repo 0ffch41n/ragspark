@@ -15,7 +15,8 @@ section 12 is the change of the LLM checkpoint on 2026-10-28 (D16); section
 13 is the separator in DOCX chunks on 2026-10-29 (D3); section 14 is the
 second LLM, Qwen 3.6 35B-A3B (stage 4, D9, D16); section 15 is stage 4's
 installer menu, a clean install with the second LLM and changing the LLM of a
-running installation (D8, D9).
+running installation (D8, D9); section 16 is the isolation of the models and
+databases (D17).
 Numbers can be reproduced with the scripts in [tools/](../tools/).
 
 ## 1. LLM serving — Qwen 3.8 27B NVFP4
@@ -796,3 +797,43 @@ production stack was not touched.
 - **Production:** the new `ragflow_models.py --check` reports nothing to change
   on the running stack, like the previous version. Tests: 48, among them a mock
   of RAGFlow's model registry that hides RAPTOR settings as the real API does.
+
+## 16. Isolation of the models and databases
+
+Evidence for the compose changes in D17, from the security review of
+2026-11-02: the host's IPC namespace, remote code and outbound access.
+Collected 2026-11-11 on the second DGX Spark with a temporary stack started
+from `compose/` by hand — `init-env.sh`, images and weights fetched beforehand,
+`docker compose up -d --wait`, `ragflow_models.py`, the acceptance test — and
+removed afterwards. Image `r7`, vLLM 0.27.1.
+
+- **Start:** 9 min 15 s for the whole stack from empty volumes, as before
+  (section 6: 9 min 10 s). The embedding and rerank models start without
+  `--trust-remote-code`: their pinned revisions are `XLMRobertaModel` and
+  `XLMRobertaForSequenceClassification`, with no `auto_map` and no Python
+  file.
+- **Model registration and the acceptance test:** passed — indexing (Cyrillic
+  share 0.992), two answers with citations, the refusal, Low in 10 s, the
+  assistant chat.
+- **Outbound access:** `ragflow` reaches the internet (HTTP 200 from
+  huggingface.co); `vllm-llm`, `vllm-embed`, `vllm-rerank`, `es01`, `minio`,
+  `mysql` and `redis` cannot even resolve an outside name, while all seven
+  resolve by service name from `ragflow`. The network `ragspark-backend` is
+  `internal`.
+- **Weights read only:** writing into the cache from `vllm-llm` fails with
+  «Read-only file system».
+- **Shared memory:** each vLLM container runs with its own IPC namespace and a
+  2 GB `/dev/shm`. Under the speed benchmark (up to 8 concurrent requests) and
+  an image request the peak use was 4 KB in each of the three, with both LLMs.
+- **Speed, unchanged:**
+
+  | | 27B, this stack | 27B, production (section 12) | Qwen 3.6, this stack | Qwen 3.6 (section 14) |
+  |---|---|---|---|---|
+  | 8k context, tok/s | 26.2 | 26.0 | 103.4 | 102.8 |
+  | 8k, first token | 6.30 s | 6.43 s | 1.39 s | 1.37 s |
+  | 8 concurrent, aggregate tok/s | 135.5 | 137.3 | 367.8 | 365.6 |
+
+  A Russian answer, a tool call and an image description: correct with both.
+- **Qwen 3.6 without outbound access:** started with the SM12x MoE kernels
+  (`FLASHINFER_B12X`) in 412 s, nothing downloaded; KV cache 19.1 GiB = 1.29 M
+  tokens.

@@ -395,7 +395,9 @@ re-check them before any version bump.
   Asia/Shanghai and knows nothing about the models.
 - **How:**
   - one published port — RAGFlow's nginx, 80 by default; everything else only
-    on the internal network (D12);
+    on the internal network (D12). Since 2026-11 the models and databases sit
+    on a network marked `internal` (`ragspark-backend`), with no route outside;
+    only `ragflow` keeps outbound access;
   - start order through health checks: the vLLM services one at a time
     (embeddings, reranker, LLM), the databases in parallel with them, RAGFlow
     last. vLLM sizes its cache from the memory it measures while starting; on
@@ -415,8 +417,11 @@ re-check them before any version bump.
     may also define carry the `RAGSPARK_` prefix, because compose prefers the
     shell's value over `.env`);
   - vLLM starts offline (`HF_HUB_OFFLINE=1`): weights come from the host cache
-    only, so a start does not depend on Hugging Face. Usage statistics are off
-    (`VLLM_NO_USAGE_STATS`, `DO_NOT_TRACK`);
+    only, mounted read only, so a start does not depend on Hugging Face. Usage
+    statistics are off (`VLLM_NO_USAGE_STATS`, `DO_NOT_TRACK`). Each vLLM
+    container has its own `/dev/shm` instead of the host's IPC namespace, and
+    the embedding and rerank models run without `--trust-remote-code`: their
+    pinned revisions are standard XLM-RoBERTa without code;
   - logs capped at 5 × 20 MB per container; every image pinned by digest
     ([tools/pin_images.py](../tools/pin_images.py)).
 - **Differences from RAGFlow's compose** besides the above: the MySQL database

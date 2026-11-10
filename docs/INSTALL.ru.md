@@ -142,7 +142,7 @@ sudo HF_ENDPOINT=https://hf-mirror.example HTTPS_PROXY=http://proxy:3128 ./insta
 | `/srv/ragspark/hf-cache` | веса моделей (или выбранный каталог) |
 | `/etc/systemd/system/ragspark.service` | запуск стека при загрузке |
 | `/usr/local/bin/ragspark` | команда управления |
-| Docker | проект `ragspark`: 8 контейнеров, 6 томов, сеть `ragspark`; образы |
+| Docker | проект `ragspark`: 8 контейнеров, 6 томов, сети `ragspark` и `ragspark-backend`; образы |
 
 Не меняются: `/etc/docker/daemon.json`, системные пакеты, файрвол, DNS, другие
 контейнеры. В `manifest.json` записано всё, что создал установщик, и удаление

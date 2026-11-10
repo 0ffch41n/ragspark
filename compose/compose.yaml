@@ -40,15 +40,19 @@ x-vllm: &vllm
   <<: *restart
   logging: *logging
   entrypoint: ["/usr/bin/env"]
-  ipc: host
+  # Its own /dev/shm instead of the host's IPC namespace (ipc: host): one GPU per
+  # container, so vLLM needs shared memory only for its own processes.
+  shm_size: 2gb
+  networks: [backend]                           # no route to the internet
   environment:
-    HF_HUB_OFFLINE: ${RAGSPARK_HF_OFFLINE:-1}   # weights come from the host cache only
+    HF_HUB_OFFLINE: "1"                         # weights come from the host cache only
     HF_HUB_DISABLE_TELEMETRY: "1"
     VLLM_NO_USAGE_STATS: "1"
     DO_NOT_TRACK: "1"
     TZ: ${RAGSPARK_TZ:-Etc/UTC}
   volumes:
-    - ${RAGSPARK_HF_CACHE:-/srv/ragspark/hf-cache}:/root/.cache/huggingface
+    # Read only: the installer downloads the weights beforehand, in its own container.
+    - ${RAGSPARK_HF_CACHE:-/srv/ragspark/hf-cache}:/root/.cache/huggingface:ro
     - vllm-compile-cache:/root/.cache/vllm      # torch.compile results, keyed by vLLM version and flags
   deploy:
     resources:
@@ -82,7 +86,6 @@ services:
       - pooling
       - --gpu-memory-utilization
       - "0.05"
-      - --trust-remote-code
 
   vllm-rerank:
     <<: *vllm
@@ -97,7 +100,6 @@ services:
       - pooling
       - --gpu-memory-utilization
       - "0.03"
-      - --trust-remote-code
     depends_on:
       vllm-embed:
         condition: service_healthy
@@ -116,6 +118,7 @@ services:
     <<: *restart
     image: elasticsearch:8.11.3@sha256:58a3a280935d830215802322e9a0373faaacdfd646477aa7e718939c2f29292a
     logging: *logging
+    networks: [backend]
     environment:
       - node.name=es01
       - ELASTIC_PASSWORD=${ELASTIC_PASSWORD:?run init-env.sh}
@@ -148,6 +151,7 @@ services:
     <<: *restart
     image: mysql:8.0.40@sha256:d58ac93387f644e4e040c636b8f50494e78e5afc27ca0a87348b2f577da2b7ff
     logging: *logging
+    networks: [backend]
     environment:
       - MYSQL_ROOT_PASSWORD=${MYSQL_PASSWORD:?run init-env.sh}
       - MYSQL_DATABASE=${MYSQL_DBNAME:-rag_flow}
@@ -172,6 +176,7 @@ services:
     <<: *restart
     image: pgsty/silo:RELEASE.2026-08-06T00-00-00Z@sha256:29a498b24669cae1fed11c1a2fb2b3d73c68829a0a9c0b14e71b386671d38fac
     logging: *logging
+    networks: [backend]
     command: ["server", "--console-address", ":9001", "/data"]
     environment:
       - MINIO_ROOT_USER=${MINIO_USER:-rag_flow}
@@ -189,6 +194,7 @@ services:
     <<: *restart
     image: valkey/valkey:8@sha256:640c5e62cea04b6d6f2084232651d0cc70362d31f4f805e7be94dbed6855e8f2
     logging: *logging
+    networks: [backend]
     # Settings as in RAGFlow's compose; the password goes through a config file
     # instead of the command line, where any local user could read it (ps).
     command: ["sh", "-c", "umask 077 && printf 'requirepass %s\n' \"$$REDIS_PASSWORD\" > /tmp/valkey.conf && exec redis-server /tmp/valkey.conf --maxmemory 128mb --maxmemory-policy volatile-lru"]
@@ -211,6 +217,7 @@ services:
     <<: *restart
     image: ghcr.io/0ffch41n/ragspark-ragflow:0.27.2-arm64-r7@sha256:21c32fb9b8a54f02920f8bfc689166dbf8a6b0bc42b60a2d51baa86072f2d881
     logging: *logging
+    networks: [default, backend]       # the only service with a published port and outbound access
     hostname: ragflow                  # stable task-executor id across re-creation
     command:                           # as in RAGFlow 0.27.2's compose
       - --enable-adminserver
@@ -261,5 +268,8 @@ volumes:
   ragflow-logs:
 
 networks:
-  default:
+  default:                    # RAGFlow only: the published web port and its own outbound access
     name: ragspark
+  backend:                    # models and databases: reachable from RAGFlow, no route outside
+    name: ragspark-backend
+    internal: true

@@ -32,12 +32,15 @@ every `docker compose` command must run from the `compose/` directory.
 | `mysql` | MySQL 8.0.40 | RAGFlow metadata | — |
 | `minio` | pgsty/silo | uploaded files | — |
 | `redis` | Valkey 8 | queues and cache | 128 MB |
-| `ragflow` | RAGSpark r3 | web interface, API, document processing | — |
+| `ragflow` | RAGSpark image (`r7`) | web interface, API, document processing | — |
 
 Only `ragflow` publishes a port: its nginx on port 80 (`RAGSPARK_HTTP_BIND`,
 `RAGSPARK_HTTP_PORT`), which serves both the web interface and the API under
-`/api/v1`. The other services are reachable only on the internal network
-`ragspark`, by service name.
+`/api/v1`. It is also the only service with outbound access (network
+`ragspark`). The models and databases sit on the network `ragspark-backend`,
+which is `internal`: RAGFlow reaches them by service name, and they have no
+route outside. The vLLM containers get the weights read only and their own
+2 GB `/dev/shm` instead of the host's IPC namespace.
 
 ## Start order
 
@@ -85,9 +88,15 @@ sudo docker compose exec -T ragflow \
 
 and open `http://<spark address>/` in a browser.
 
-**Weights not in the cache yet?** vLLM starts offline (`RAGSPARK_HF_OFFLINE=1`)
-and stops if a file is missing. For a first download set
-`RAGSPARK_HF_OFFLINE=0` in `.env`, start, and set it back to `1` afterwards.
+**Weights not in the cache yet?** vLLM starts offline, with the cache read only
+and no route outside, and stops if a file is missing. The installer downloads
+the weights beforehand; by hand, for each `vllm serve` repository and its
+`--revision`:
+
+```bash
+sudo docker run --rm -v /srv/ragspark/hf-cache:/root/.cache/huggingface \
+  --entrypoint hf <vLLM image of compose.yaml> download <repository> --revision <commit>
+```
 
 ## Everyday commands
 

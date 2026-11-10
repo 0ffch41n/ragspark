@@ -142,7 +142,7 @@ deletes their documents, users and chats.
 | `/srv/ragspark/hf-cache` | model weights (or the chosen directory) |
 | `/etc/systemd/system/ragspark.service` | starts the stack at boot |
 | `/usr/local/bin/ragspark` | the control command |
-| Docker | project `ragspark`: 8 containers, 6 volumes, network `ragspark`; the images |
+| Docker | project `ragspark`: 8 containers, 6 volumes, networks `ragspark` and `ragspark-backend`; the images |
 
 Not changed: `/etc/docker/daemon.json`, system packages, the firewall, DNS,
 other containers. `manifest.json` lists everything the installer created, and
