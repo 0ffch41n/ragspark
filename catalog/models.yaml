@@ -44,7 +44,7 @@ models:
       hf_repo: google/gemma-4-26B-A4B-it
       served_name: google/gemma-4-26B-A4B-it
       modes: [single]
-      compose: null                     # stage 4: compose/llm/gemma-4-26b-a4b.yaml
+      compose: null                     # no LLM file: set aside in stage 4 (note)
       image: vllm/vllm-openai:gemma4-cu130@sha256:0d152595cd940ea1e0890fa190a37b7a86e3f7f0f5048ac3e2e4c14529fea833
       gpu_memory_utilization: 0.60      # ~84 GB: ~50 GB weights + KV cache
       context:
@@ -56,7 +56,10 @@ models:
         decode_tok_s_single: 23
       validated: false
       license: TBD
-      note: alternative to the default LLM - faster per user (4B active parameters)
+      note: >-
+        Set aside in stage 4: without tool calling it serves only the Naive
+        level, and it is slower than both runnable LLMs (23 tok/s against
+        27 and 108).
 
     - id: qwen-3.8-27b-nvfp4
       hf_repo: unsloth/Qwen3.8-27B-NVFP4    # FP8 where Inferact's checkpoint keeps bf16: faster, same MTP acceptance (D16)
@@ -145,7 +148,7 @@ models:
       context: 8192
       memory_gb: 2
       serving_verified: "2026-10-07 on vllm/vllm-openai:v0.27.1-aarch64 (also 2026-09-30 on :gemma4-cu130)"
-      validated: false
+      validated: true                   # in every acceptance test since stage 3: clean install 2026-10-20 (VALIDATION section 9), stage 4 2026-11-09 (section 15)
       license: "Apache-2.0 (model card at the pinned revision, checked 2026-11-09)"
 
   rerank:
@@ -156,7 +159,7 @@ models:
       context: 8192
       memory_gb: 2
       serving_verified: "2026-10-07 on vllm/vllm-openai:v0.27.1-aarch64 (also 2026-09-30 on :gemma4-cu130)"
-      validated: false
+      validated: true                   # in every acceptance test since stage 3: clean install 2026-10-20 (VALIDATION section 9), stage 4 2026-11-09 (section 15)
       license: "Apache-2.0 (model card at the pinned revision, checked 2026-11-09)"
       note: >-
         Absolute scores are low for long, noisy chunks; RAGSpark uses

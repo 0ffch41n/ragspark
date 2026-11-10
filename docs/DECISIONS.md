@@ -200,6 +200,19 @@ re-check them before any version bump.
 - **The default reranker is not applied everywhere:** retrieval testing and new
   chats start without one. The installer sets it explicitly on the chats it
   creates (D15).
+- **Changing the LLM (stage 4):** RAGFlow cannot rename a model, and chats and
+  defaults refer to it by its record id, so `ragspark llm` adds the new model
+  to the same instances, moves the defaults, the chats and the scan datasets
+  and documents to it, and disables the old model, which switching back
+  enables again ([TOOLS.md](TOOLS.md)). The embedding model is never changed
+  in place: every dataset's index was built with it.
+- **One exception to the API:** RAGFlow 0.27.2 leaves the RAPTOR and graph
+  settings out of the dataset and document records of its API, and updating a
+  document's parser settings without RAPTOR deletes the document's own. To keep
+  them, the script reads a document's settings through RAGFlow's services in
+  the container — read only — and sends RAPTOR back unchanged through the API;
+  a document whose settings cannot be read is left as it is. Verified on a test
+  install, both ways ([VALIDATION.md](VALIDATION.md), section 15).
 
 ## D9. Model catalog
 
@@ -210,6 +223,15 @@ re-check them before any version bump.
 - **How:** the wizard offers only models that fit the detected hardware and mode
   and shows the expected context and speed. Model weights live in a host
   directory outside Docker volumes, so reinstalls do not re-download them.
+- **Implemented (stage 4):** the installer's menu lists every LLM that has a
+  file in `compose/llm/` and supports the mode being installed, with speed for
+  one user, context, memory (its share of the detected memory), tools, vision,
+  license and status, the catalog's default first; `--yes` takes the default
+  and `./install.sh --llm list` prints the menu. The plan lists every model to
+  be downloaded with its license. On one DGX Spark every runnable LLM fits, so
+  the hardware check is the mode and the presence of an LLM file; a rule for
+  memory comes with models that need it ([INSTALL.md](INSTALL.md),
+  [VALIDATION.md](VALIDATION.md), section 15).
 - **Rule:** `validated: true` only after the acceptance test passes on real
   hardware. Each model's license is shown before download.
 
@@ -352,8 +374,13 @@ re-check them before any version bump.
   instead of 101 tokens and 10 s.
 - **Trade-off:** long prompts are read more slowly: the first token of an
   8k-token prompt comes after 6.4 s instead of 4.9 s. For answers of a few
-  hundred tokens the faster decode still wins. Gemma 4 26B-A4B stays in the
-  catalog as an alternative.
+  hundred tokens the faster decode still wins.
+- **Alternative (stage 4):** Qwen 3.6 35B-A3B, a mixture of experts with about
+  3B active parameters: about 4 times the speed (107.6 tok/s), the same answers
+  at Naive and Low, but at Medium and above it more often gives only part of a
+  two-part answer ([VALIDATION.md](VALIDATION.md), section 14). Gemma 4
+  26B-A4B was set aside: no tool calling for the agentic levels, and slower
+  than both.
 
 ## D17. Runtime — RAGSpark's own compose
 
@@ -549,12 +576,17 @@ re-check them before any version bump.
 - **Auto-question and keyword analysis.** Both use the LLM to improve matching
   (questions generated per chunk at indexing; keywords extracted per query).
   Measure the gain against the extra time.
-- **Upstream reports.** RAGFlow defects found in stage 3 should be reported to
-  the `0.27.x` branch: the reranker input (D3 patch 2), DeepDOC on Cyrillic
-  (D14), the kNN filter (D3 patch 3), the agentic-pipeline defects of D19, the
-  health check's held connection (D3 patch 7) together with
+- **Upstream reports.** RAGFlow defects found in stages 3 and 4 should be
+  reported to the `0.27.x` branch: the reranker input (D3 patch 2), DeepDOC on
+  Cyrillic (D14), the kNN filter (D3 patch 3), the agentic-pipeline defects of
+  D19, the health check's held connection (D3 patch 7) together with
   `close_stale(age=30)` itself, which closes any connection held longer than
-  30 s, a long transaction's included, and the DOCX chunk join (D3 patch 8).
+  30 s, a long transaction's included, the DOCX chunk join (D3 patch 8), and
+  the document update that deletes RAPTOR settings the API never shows (D8).
+- **Updating an installation.** The installer copies its code to
+  `/opt/ragspark` once; a newer release — for example `ragspark llm` on an
+  installation made before stage 4 — reaches it only by copying files by hand.
+  An update command belongs with stage 6.
 - **Ultra.** The fourth level answers 7/7 on the acceptance sample (`r4`), but
   its own distinguishing feature is still untested: the knowledge-graph tool
   needs a graph built at indexing, and none of RAGSpark's question sets has

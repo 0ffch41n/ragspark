@@ -5,7 +5,7 @@
 [Русская версия](README.ru.md)
 
 > **Status: pre-alpha.** The project is being built in public. The installer
-> works on DGX Spark (stage 3.4), but expect changes, and do not use it on a
+> works on DGX Spark (stages 3–4), but expect changes, and do not use it on a
 > machine whose data you need. See the roadmap below.
 
 ## What it is
@@ -16,7 +16,7 @@ citations — with every model running locally and no data leaving the machine.
 
 - **RAGFlow** for document parsing, chunking, retrieval and the web interface
 - **vLLM** serving the LLM, the embedding model and the reranker on the GB10 GPU
-- **One command** to install, back up, restore and remove
+- **One command** to install, change the LLM and remove (backups: stage 6)
 - **A model catalog**: pick a model that fits your hardware; each entry is
   marked *validated* or *experimental*
 - **Two modes**: `single` (one DGX Spark) and `stack` (two DGX Spark units
@@ -57,8 +57,11 @@ starts the stack and finishes with an acceptance test. Then
 
 Default models: Qwen 3.8 27B NVFP4 with multi-token prediction (LLM),
 deepvk/USER-bge-m3 (embeddings), BAAI/bge-reranker-v2-m3 (reranker); all three
-on the official vLLM 0.27.1 image. Gemma 4 26B-A4B is the faster alternative.
-See [catalog/models.yaml](catalog/models.yaml).
+on the official vLLM 0.27.1 image. Qwen 3.6 35B-A3B is the fast alternative:
+about 4 times the speed, the same answers at the chat's first levels (Naive,
+Low), weaker on two-part answers above them. Choose it when installing or later
+with `sudo ragspark llm`. See [catalog/models.yaml](catalog/models.yaml) and
+[docs/VALIDATION.md](docs/VALIDATION.md), section 14.
 
 **Russian documents:** RAGFlow's defaults do not work well for Russian, and
 RAGSpark changes them — PDFs are read from their text layer, and retrieval
@@ -66,7 +69,7 @@ relies on the reranker. RAGFlow's agentic chat modes (Low … Ultra) failed on
 Russian documents and are fixed in RAGSpark's image; the chat starts in the
 fast classic mode. The measurements are in
 [docs/VALIDATION.md](docs/VALIDATION.md). Scanned PDFs are read through the
-LLM's own vision, about 17 s a page.
+LLM's own vision: about 20 s a page with the default LLM, about 7 with Qwen 3.6.
 
 ## Roadmap
 
@@ -77,7 +80,11 @@ LLM's own vision, about 17 s a page.
   - [x] 3.2 — RAGSpark compose ([docs/COMPOSE.md](docs/COMPOSE.md))
   - [x] 3.3 — installer ([docs/INSTALL.md](docs/INSTALL.md))
   - [x] 3.4 — clean install ([docs/VALIDATION.md](docs/VALIDATION.md), §9)
-- [ ] **Stage 4** — model catalog beyond the defaults
+- [x] **Stage 4** — model catalog beyond the defaults
+  - [x] 4.1 — a second LLM, Qwen 3.6 35B-A3B ([docs/VALIDATION.md](docs/VALIDATION.md), §14)
+  - [x] 4.2 — the installer's model menu ([docs/INSTALL.md](docs/INSTALL.md))
+  - [x] 4.3 — changing the LLM of a running installation ([docs/COMPOSE.md](docs/COMPOSE.md), *Changing the LLM*)
+  - [x] 4.4 — clean install with the second LLM ([docs/VALIDATION.md](docs/VALIDATION.md), §15)
 - [ ] **Stage 5** — `stack` mode on two DGX Spark units
 - [ ] **Stage 6** — backups, optional monitoring, offline bundle
 

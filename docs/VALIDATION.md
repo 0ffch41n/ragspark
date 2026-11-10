@@ -12,7 +12,10 @@ the images `r3` and `r4` (D19); section 9 is stage 3.4, a clean install from a
 fresh clone (D18); section 10 is scanned documents (D14); section 11 is three
 checks of 2026-10-21: database warnings, sign-up, pinned revisions (D3, D6);
 section 12 is the change of the LLM checkpoint on 2026-10-28 (D16); section
-13 is the separator in DOCX chunks on 2026-10-29 (D3).
+13 is the separator in DOCX chunks on 2026-10-29 (D3); section 14 is the
+second LLM, Qwen 3.6 35B-A3B (stage 4, D9, D16); section 15 is stage 4's
+installer menu, a clean install with the second LLM and changing the LLM of a
+running installation (D8, D9).
 Numbers can be reproduced with the scripts in [tools/](../tools/).
 
 ## 1. LLM serving — Qwen 3.8 27B NVFP4
@@ -680,3 +683,116 @@ prose, Latin and Cyrillic mixed. It was indexed with the installer's settings
 - **Image `r7`:** differs from `r6` in exactly `rag/nlp/__init__.py`, and that
   file is byte for byte the one in the container measured above
   ([BUILD.md](BUILD.md)).
+
+## 14. A second LLM — Qwen 3.6 35B-A3B
+
+Evidence for the catalog entry `qwen-3.6-35b-a3b-nvfp4` (stage 4). Collected
+2026-10-29 on the second DGX Spark (DGX OS 7.6.0, driver 580.178.04, CUDA
+13.0), with the checkpoint served there and reached from the production
+RAGFlow (image `r7`) through test registrations deleted afterwards; the speed
+harness of section 12.
+
+- **The model:** `Qwen3_5MoeForConditionalGeneration` — 35B parameters, 256
+  experts with 8 active (about 3B parameters per token), 40 layers (30 with
+  linear attention, 10 with full attention), one MTP layer and a vision tower;
+  Apache-2.0. Its chat template writes tool calls in the XML of the default
+  LLM (`qwen3_xml`); thinking is on by default and is switched off on the
+  server, as for the default LLM (D16).
+- **The checkpoint** `unsloth/Qwen3.6-35B-A3B-NVFP4-Fast` (revision
+  `1c3f884b…`, 23.7 GB): NVFP4 experts with 4-bit activations; FP8 for
+  attention, the linear-attention projections and `lm_head`; MTP and vision in
+  bf16. Set aside: NVIDIA's NVFP4 (16-bit activations for the experts, which
+  vLLM runs through Marlin), RedHatAI's (linear attention and `lm_head` in
+  bf16 — what made Inferact's 27B checkpoint slow, section 12), unsloth's
+  plain NVFP4 (26.5 GB) and Qwen's FP8 (37.5 GB).
+- **vLLM 0.27.1 on GB10:** for NVFP4 experts the automatic choice is a CUTLASS
+  kernel; the SM12x kernels are left out of it on GB10 and are selected with
+  `--moe-backend flashinfer_b12x` and `CUTE_DSL_ARCH=sm_121a` (the checkpoint
+  card). The first start with them failed: the MTP drafter is bf16 and
+  inherited the option («not supported for unquantized MoE»);
+  `"moe_backend": "auto"` in the speculative config fixes it. Then: ready in
+  400 s, weights 22.2 GiB, KV cache 19.3 GiB = 1.42 M tokens at the 0.50
+  memory share.
+- **Speed** (the LLM file uses MTP 3):
+
+  | | MTP 2 | MTP 3 | default LLM, production (section 12) |
+  |---|---|---|---|
+  | 1k context, tok/s | 92.3 | **107.6** | 27.2 |
+  | 8k context, tok/s | 93.2 | **102.8** | 26.0 |
+  | 8k, first token | 1.36 s | 1.37 s | 6.43 s |
+  | 4 concurrent, aggregate tok/s | 195.1 | 239.8 | 84.7 |
+  | 8 concurrent, aggregate tok/s | 370.4 | 365.6 | 137.3 |
+  | MTP draft tokens accepted | 80% | 71% | 74% |
+
+  About 4 times the default LLM's speed for one user and 2.7 times under 8
+  concurrent requests; a long prompt is read about 5 times faster.
+- **Through RAGFlow:**
+  - Acceptance questions: passed, Low in 5 s. A Russian answer, a tool call and
+    an image description: correct.
+  - Acceptance sample, all five levels: Naive 7/7, Low 7/7, Medium 6/7, High
+    6/7, Ultra 5/7; the no-answer question 1/1 at every level (the default
+    LLM: 7/7 everywhere). The misses are two-part answers given in part —
+    «14 copies» without «Архив-2» at High and Ultra, the half-hour deadline
+    left out at Ultra — and one answer at Medium without a citation. Medians
+    Naive 1 s, Low 4 s, Medium 21 s, High 19 s, Ultra 21 s (the default LLM
+    on production: 2, 10, 41, 37, 36 s).
+  - The digital MSI manual (Plain Text, 41 chunks), levels Naive, Low,
+    Medium: 8/8, 8/8, 8/8 and 2/2, 2/2, 0/2 no-answer questions — the same as
+    the default LLM; Medium median 41 s against 55 s.
+  - Four pages of the section 10 scan through vision: 27 s (the default LLM
+    85 s), 7 chunks, Cyrillic 0.885, 0 garbled words, 5/5 and 2/2 (D15
+    settings).
+  - 30 Russian answers at temperature 0.7: no CJK characters.
+- **Conclusion:** the fast choice for Naive and Low, the levels a chat starts
+  at, with the same answers there; at Medium and above it more often gives
+  only part of a two-part answer. The default stays the 27B (D16).
+
+## 15. Stage 4 — choosing the LLM and changing it
+
+Collected 2026-11-09: the installer's menu on the production Spark, then a
+clean install with the second LLM and two changes of the LLM on the second
+DGX Spark (DGX OS 7.6.0, driver 580.178.04, Docker 29.6.2, Compose 5.2.0,
+image `r7`), installed from a clone of `main` with the stage 4 changes. The
+production stack was not touched.
+
+- **Menu** (D9): `./install.sh --llm list` on the production Spark lists both
+  LLMs with speed, context, memory (~61 GiB, half of the detected 122 GiB),
+  tools and vision, license and status, the default first, and names the
+  catalog entries that have no LLM file yet. Without a terminal or with
+  `--yes` the default is taken. The plan lists every model to be downloaded
+  with its license.
+- **Clean install with the second LLM** (`--llm qwen-3.6-35b-a3b-nvfp4`, a
+  weights directory that already held both LLMs, the web port bound to
+  127.0.0.1): all 11 steps, the acceptance test included, in 23 minutes; only
+  the embedding and rerank weights and five images were downloaded. vLLM chose
+  `FLASHINFER_B12X` for the experts; KV cache 18.6 GiB = 1.26 M tokens.
+  RAGFlow: one model per instance, both chats on Qwen 3.6. Docker on that
+  Spark has no `nvidia` runtime registered; the GPU comes through CDI, which
+  the system check accepts.
+- **Change to the default LLM** (`sudo ragspark llm qwen-3.8-27b-nvfp4
+  --yes`, its weights present): KV cache 31.4 GiB = 748k tokens, as on the
+  production Spark (770k) — with the page cache dropped vLLM got its full
+  share. RAGFlow: the 27B added to the chat and vision instances and Qwen 3.6
+  disabled; the default chat model, both chats, a scan dataset and its
+  document moved to the 27B; the document's RAPTOR and graph settings
+  unchanged.
+- **Two defects found during this test and fixed before the commit:**
+  - RAGFlow's API leaves the RAPTOR and graph settings out of its dataset and
+    document records, and updating a document's parser settings without RAPTOR
+    deletes the document's own (D8). The first version of
+    `ragflow_models.py` would have deleted them on every document it moved; it
+    now reads them through RAGFlow's services and sends them back unchanged.
+  - `ragflow` depends on `vllm-llm`, so a plain `docker compose up` kept the
+    whole of RAGFlow — web interface, datasets, search — down for 9 minutes.
+    The command now starts the LLM alone and recreates `ragflow` once it is
+    ready.
+- **Change back** (`sudo ragspark llm qwen-3.6-35b-a3b-nvfp4 --yes`, both
+  fixes in), sampled every 10 s: the web interface answered during the whole
+  start of the LLM (4.5 minutes, the compile cache was warm), then was
+  unavailable for 30–40 s while `ragflow` was recreated. KV cache 18.1 GiB =
+  1.22 M tokens. RAGFlow: Qwen 3.6's records enabled again with their original
+  ids (no duplicates), the 27B disabled; chats, dataset and document back on
+  Qwen 3.6; RAPTOR and graph settings still unchanged.
+- **Production:** the new `ragflow_models.py --check` reports nothing to change
+  on the running stack, like the previous version. Tests: 48, among them a mock
+  of RAGFlow's model registry that hides RAPTOR settings as the real API does.
