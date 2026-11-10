@@ -147,6 +147,20 @@ class WeightsCheck(unittest.TestCase):
         self.assertEqual(install.model_repos(cfg), [("org/embed", ""), ("org/llm", "abc123")])
 
 
+class SourceVersion(unittest.TestCase):
+    def test_git_trusts_only_this_clone_and_runs_no_monitor(self):
+        from unittest import mock
+        calls = []
+        with mock.patch.object(install, "run", side_effect=lambda cmd, **kw: (calls.append(cmd), (0, "v1-2-gabc\n"))[1]):
+            self.assertEqual(install.source_version(), "v1-2-gabc")
+        cmd = calls[0]
+        self.assertIn("safe.directory=" + os.path.realpath(install.paths.SOURCE_ROOT), cmd)
+        self.assertNotIn("safe.directory=*", cmd)
+        self.assertIn("core.fsmonitor=false", cmd)
+        with mock.patch.object(install, "run", return_value=(128, "fatal: not a git repository")):
+            self.assertEqual(install.source_version(), "unknown")
+
+
 class LlmChoice(unittest.TestCase):
     """The LLM an install takes without a question is the catalog's default, not the first file name."""
 

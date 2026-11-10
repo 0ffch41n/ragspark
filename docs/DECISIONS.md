@@ -256,6 +256,9 @@ re-check them before any version bump.
 1. The installer does not modify the host beyond what it declares.
 2. Uninstall mirrors install, driven by a manifest of created resources.
 3. Only the web entry point faces the network; other ports bind to `127.0.0.1`.
+   It is plain HTTP, meant for a trusted network; TLS, where needed, comes from
+   a reverse proxy in front of it (accepted after the security review of
+   2026-11-02).
 4. An install is complete only when a RAG query returns a cited answer.
 5. Registries are unreliable: offline bundle and image mirror are first-class.
 

@@ -21,6 +21,10 @@ record: D18 in [DECISIONS.md](DECISIONS.md).
 | Network | Docker Hub, `ghcr.io` and `huggingface.co` — or a registry mirror and weights copied in advance |
 | Port | 80 free, or choose another one |
 
+The web interface and the API are plain HTTP: install RAGSpark on a trusted
+network. For access from outside it, put your own reverse proxy with TLS in
+front of the web port.
+
 ## Install
 
 ```bash
@@ -64,12 +68,15 @@ sudo ./install.sh --yes --lang en --admin-email admin@example.com --http-port 80
 | `--no-network` | skip the registry latency check |
 | `--force` | go on despite failed checks (see *Checks*) |
 
-`sudo` does not pass environment variables on. A Hugging Face token, a mirror
-or a proxy for the weights download go on the same command line:
+`sudo` does not pass environment variables on. A mirror or a proxy for the
+weights download go on the same command line; a Hugging Face token is read
+without echo and handed over by name, so it appears neither in the process
+list nor in the shell history:
 
 ```bash
-sudo HF_TOKEN=hf_... ./install.sh
 sudo HF_ENDPOINT=https://hf-mirror.example HTTPS_PROXY=http://proxy:3128 ./install.sh
+read -rs HF_TOKEN && export HF_TOKEN
+sudo --preserve-env=HF_TOKEN ./install.sh
 ```
 
 The default models are public and need no token. Docker pulls images through
@@ -328,7 +335,7 @@ passwords.
 |---|---|
 | a check fails | the message says what to change; `sudo ./install.sh check` to repeat |
 | image download fails or stalls | slow registry: a mirror ([BUILD.md](BUILD.md)); run the installer again, it continues |
-| weights download fails | `HF_TOKEN`, `HF_ENDPOINT` or a proxy on the `sudo` command line; or copy the weights into the directory in advance |
+| weights download fails | `HF_ENDPOINT` or a proxy on the `sudo` command line, a token through `--preserve-env=HF_TOKEN` (*Install*); or copy the weights into the directory in advance |
 | step 9 fails | `sudo ragspark status`, then `sudo ragspark logs <service>`; [COMPOSE.md](COMPOSE.md), *Troubleshooting* |
 | acceptance test fails | its output names the failed check; `sudo ragspark logs ragflow`; repeat with `sudo ragspark acceptance` |
 | an answer takes a minute or more | expected at Medium and above (see *Reasoning levels*); Naive answers in seconds |

@@ -802,7 +802,7 @@ production stack was not touched.
 
 Evidence for the compose changes in D17, from the security review of
 2026-11-02: the host's IPC namespace, remote code and outbound access.
-Collected 2026-11-11 on the second DGX Spark with a temporary stack started
+Collected 2026-11-10 on the second DGX Spark with a temporary stack started
 from `compose/` by hand — `init-env.sh`, images and weights fetched beforehand,
 `docker compose up -d --wait`, `ragflow_models.py`, the acceptance test — and
 removed afterwards. Image `r7`, vLLM 0.27.1.

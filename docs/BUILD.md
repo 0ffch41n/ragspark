@@ -124,7 +124,9 @@ The script:
 
 1. clones RAGFlow at tag `v0.27.2` and **verifies the commit**
    (`a024bea0…`) — if the tag ever moves, it stops;
-2. resets the patched files to upstream and applies the RAGSpark patches;
+2. resets the whole tree to that commit (`git reset --hard`, `git clean -fdx`:
+   the tree is the build context, so nothing else may reach the image) and
+   applies the RAGSpark patches;
    [patch_base_images.py](../build/ragflow/patch_base_images.py) also pins the
    two images the Dockerfile builds from — `ubuntu:24.04` and
    `infiniflow/ragflow_deps:latest`, floating tags upstream — to the digests set
@@ -133,6 +135,14 @@ The script:
 3. builds `ghcr.io/0ffch41n/ragspark-ragflow:0.27.2-arm64-r7` with OCI labels
    (source, version, upstream commit, license);
 4. with `--push`, pushes the image to GHCR.
+
+The tree lives in `/var/cache/ragspark-build` (`RAGSPARK_BUILD_DIR`): the
+script stops if that directory or the clone belongs to another user, is
+writable by group or others, or is a symbolic link. Builds before 2026-11 used
+`/var/tmp/ragspark-build`, which any user could have created first; it can be
+deleted. `build.sh --prepare-only` clones and patches without Docker and without
+root, for example `RAGSPARK_BUILD_DIR=/tmp/check build/ragflow/build.sh
+--prepare-only` to inspect the patched tree.
 
 ## Differences from upstream
 

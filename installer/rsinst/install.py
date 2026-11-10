@@ -214,9 +214,7 @@ def step_files(manifest):
             src = os.path.join(paths.SOURCE_ROOT, f)
             if os.path.exists(src):
                 shutil.copy2(src, os.path.join(dst, f))
-        code, out = run(["git", "-c", "safe.directory=*", "-C", paths.SOURCE_ROOT,
-                         "describe", "--tags", "--always", "--dirty"])
-        version = out.strip().splitlines()[-1] if code == 0 and out.strip() else "unknown"
+        version = source_version()
         with open(os.path.join(dst, "VERSION"), "w") as f:
             f.write(version + "\n")
         manifest.set("version", version)
@@ -232,6 +230,16 @@ def step_files(manifest):
         manifest.add_file(cli)
         ui.status("OK", ui.t("cli_installed", path=paths.CLI_PATH))
     return True
+
+
+def source_version():
+    """`git describe` of the clone the installer runs from, or "unknown". Root runs git in a
+    directory another user owns: trust exactly that clone, not every repository (safe.directory=*),
+    and never start a file-system monitor its configuration may name."""
+    root = os.path.realpath(paths.SOURCE_ROOT)
+    code, out = run(["git", "-c", "safe.directory=" + root, "-c", "core.fsmonitor=false", "-C", root,
+                     "describe", "--tags", "--always", "--dirty"])
+    return out.strip().splitlines()[-1] if code == 0 and out.strip() else "unknown"
 
 
 def step_settings(config):
