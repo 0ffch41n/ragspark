@@ -1,0 +1,5 @@
+#!/bin/sh
+# Fake `ip` for installer tests: both ends of the stack-mode cable on one interface, as `ip -o -4 addr show` prints them.
+printf '1: lo    inet 127.0.0.1/8 scope host lo\\       valid_lft forever preferred_lft forever\n'
+printf '3: enp1s0f1np1    inet 192.168.100.10/24 brd 192.168.100.255 scope global noprefixroute enp1s0f1np1\\       valid_lft forever preferred_lft forever\n'
+printf '3: enp1s0f1np1    inet 192.168.100.11/24 brd 192.168.100.255 scope global secondary enp1s0f1np1\\       valid_lft forever preferred_lft forever\n'

@@ -154,9 +154,18 @@ def host_address():
     return "localhost"
 
 
+def host_timezone():
+    """The host's time zone as init-env.sh finds it; Etc/UTC when unknown."""
+    code, out = run(["timedatectl", "show", "-p", "Timezone", "--value"])
+    tz = out.strip() if code == 0 else ""
+    if not tz and os.path.islink("/etc/localtime"):
+        tz = os.path.realpath("/etc/localtime").partition("/zoneinfo/")[2]
+    return tz if re.match(r"^[A-Za-z0-9_+/-]+$", tz or "") else "Etc/UTC"
+
+
 def project_containers():
-    """Containers of the compose project `ragspark`, running or not."""
-    code, out = run(["docker", "ps", "-a", "--filter", "label=com.docker.compose.project=" + paths.PROJECT,
+    """Containers of this unit's compose project (ragspark, or ragspark-node), running or not."""
+    code, out = run(["docker", "ps", "-a", "--filter", "label=com.docker.compose.project=" + paths.project(),
                      "--format", "{{.Names}}\t{{.State}}\t{{.Label \"com.docker.compose.project.working_dir\"}}"])
     if code != 0:
         return []

@@ -5,6 +5,73 @@ that both texts are filled in and that their {placeholders} match.
 """
 
 MESSAGES = {
+    # ------------------------------------------------------------- stack mode: two units (D10)
+    "cfg_no_stack_llm": ("No stack-mode LLM in this copy (compose/node/llm/ is empty).",
+                         "В этой копии нет LLM для режима stack (compose/node/llm/ пуст)."),
+    "cfg_llm_not_stack": ("{llm} runs on one unit; the node installs a stack-mode LLM: {choices}",
+                          "{llm} работает на одном узле; на узел ставится LLM режима stack: {choices}"),
+    "plan_node_files": ("{dir}: RAGSpark files and the node settings (no passwords: the node keeps no data)",
+                        "{dir}: файлы RAGSpark и настройки узла (без паролей: данных на узле нет)"),
+    "plan_node_docker": ("Docker: project `ragspark-node` — the embedding model, the reranker and the second half of "
+                         "{llm}; ports on the cable address {ip} only",
+                         "Docker: проект `ragspark-node` — эмбеддинги, реранкер и вторая половина {llm}; "
+                         "порты только на адресе кабеля {ip}"),
+    "plan_node_settings": ("Node of stack mode: head {head}, this unit {node}, model {llm}.",
+                           "Узел режима stack: головной {head}, этот {node}, модель {llm}."),
+    "plan_stack_settings": ("Stack mode: the node {node} runs the other half of {llm}, the embedding model and the reranker.",
+                            "Режим stack: узел {node} держит вторую половину {llm}, эмбеддинги и реранкер."),
+    "plan_watch": ("{timer}: every 30 s keeps the two halves of a stack-mode LLM together (nothing in single mode)",
+                   "{timer}: каждые 30 с держит вместе две половины LLM режима stack (в одиночном режиме ничего не делает)"),
+    "st_watch": ("Pair watch timer", "Таймер присмотра за парой"),
+    "env_node_values": ("cable: head {head}, this node {node} on {iface}", "кабель: головной {head}, этот узел {node} на {iface}"),
+    "watch_installed": ("{timer}: enabled", "{timer}: включён"),
+    "watch_failed": ("{timer} could not be enabled: {err}", "{timer} не удалось включить: {err}"),
+    "node_done_title": ("The node is ready", "Узел готов"),
+    "node_done_wait": ("Its half of {llm} waits for the head's half; the embedding model and the reranker answer on "
+                       "{ip}:8001 and :8002.",
+                       "Его половина {llm} ждёт половину головного узла; эмбеддинги и реранкер отвечают на "
+                       "{ip}:8001 и :8002."),
+    "node_done_next": ("Now on the head ({head}): sudo ragspark llm {llm} (installed head) or sudo ./install.sh --llm {llm}",
+                       "Теперь на головном узле ({head}): sudo ragspark llm {llm} (если RAGSpark там уже стоит) "
+                       "или sudo ./install.sh --llm {llm}"),
+    "pf_cable_none": ("No interface holds the cable address {ip}: connect the units first (docs/INSTALL.md, Stack mode)",
+                      "Ни у одного интерфейса нет адреса кабеля {ip}: сначала соедините узлы (docs/INSTALL.ru.md, режим stack)"),
+    "pf_cable_down": ("Cable: {iface} is {state}", "Кабель: {iface} в состоянии {state}"),
+    "pf_cable_slow": ("Cable: {iface} runs at {speed} Gb/s instead of 200: after re-plugging the cable reboot both units",
+                      "Кабель: {iface} на {speed} Гбит/с вместо 200: после переподключения кабеля перезагрузите оба узла"),
+    "pf_cable_mtu": ("Cable: {iface} MTU {mtu} instead of 9000: the halves get less bandwidth",
+                     "Кабель: {iface} MTU {mtu} вместо 9000: половинам достанется меньше пропускной способности"),
+    "pf_cable_ok": ("Cable: {iface} {ip}, {speed} Gb/s, MTU {mtu}", "Кабель: {iface} {ip}, {speed} Гбит/с, MTU {mtu}"),
+    "pf_rdma_none": ("No RDMA devices (/dev/infiniband): the halves cannot use the cable",
+                     "Нет устройств RDMA (/dev/infiniband): половины не смогут работать через кабель"),
+    "pf_rdma_ok": ("RDMA: {n} active RoCE ports", "RDMA: активных портов RoCE: {n}"),
+    "pf_rdma_half": ("RDMA: {n} active RoCE port(s) instead of 2: half the bandwidth",
+                     "RDMA: активных портов RoCE {n} вместо 2: половина пропускной способности"),
+    "pf_node_ok": ("Node {ip}, {what}: answers", "Узел {ip}, {what}: отвечает"),
+    "pf_node_down": ("Node {ip}, {what}: no answer. Install the node first: on the second unit "
+                     "sudo ./install.sh --role node",
+                     "Узел {ip}, {what}: нет ответа. Сначала установите узел: на втором Spark "
+                     "sudo ./install.sh --role node"),
+    "sw_node_role": ("This is the node of stack mode: its LLM follows the head. Change the LLM on the head.",
+                     "Это узел режима stack: его LLM следует за головным узлом. Меняйте LLM на головном."),
+    "sw_pair_failed": ("The node is not ready for {llm}.", "Узел не готов к {llm}."),
+    "sw_plan_to_stack": ("the embedding model and the reranker answer from the node {node} from then on (search keeps "
+                         "working); this unit runs the first half of {target}",
+                         "эмбеддинги и реранкер дальше отвечают с узла {node} (поиск продолжает работать); "
+                         "этот узел держит первую половину {target}"),
+    "sw_plan_to_single": ("the embedding model and the reranker start here again (search pauses for about a minute); the "
+                          "node's half keeps waiting there: `sudo ragspark stop` on the node frees its memory",
+                          "эмбеддинги и реранкер снова запускаются здесь (поиск прерывается примерно на минуту); "
+                          "половина на узле продолжает ждать: `sudo ragspark stop` на узле освободит её память"),
+    "sw_pool_to_node": ("the embedding model and the reranker: now from the node", "эмбеддинги и реранкер: теперь с узла"),
+    "sw_pool_here": ("the embedding model and the reranker: back on this unit", "эмбеддинги и реранкер: снова на этом узле"),
+    "status_stack": ("Mode: stack, node {node}", "Режим: stack, узел {node}"),
+    "status_node": ("Role: node of stack mode; head {head}", "Роль: узел режима stack; головной {head}"),
+    "status_head_api": ("The head's half of the LLM answers ({head}:8000)", "Половина LLM на головном узле отвечает ({head}:8000)"),
+    "status_head_api_down": ("The head's half of the LLM does not answer ({head}:8000)",
+                             "Половина LLM на головном узле не отвечает ({head}:8000)"),
+    "llm_nodes": ("{n} units, ~{gib} GiB each", "{n} узла, ~{gib} GiB на каждом"),
+
     # ------------------------------------------------------------- watch (stack mode)
     "watch_restarted": ("restarted {name}: {reason}", "перезапущен {name}: {reason}"),
     "watch_head_lost": ("the head's half of the LLM has not answered for {s} s, this half waits for it in vain",

@@ -110,4 +110,6 @@ if args[:1] == ["compose"]:
         out("")
     if sub[:1] == ["stop"]:
         out("")
+    if sub[:1] == ["rm"]:
+        out("")
 out("fake docker: unsupported " + " ".join(args), 1)

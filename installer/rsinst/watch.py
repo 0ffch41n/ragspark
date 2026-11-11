@@ -21,18 +21,15 @@ import json
 import os
 import re
 import time
-import urllib.request
 
-from . import catalog, paths, ui
+from . import catalog, paths, stackmode, ui
 from .manifest import Manifest
 from .sysutil import read_env, run
 
-SERVICE = "vllm-llm-rank"
-NODE_PROJECT = "ragspark-node"
+SERVICE = stackmode.RANK
 PING_FAILS = 2           # head: failed one-token requests in a row before a restart
 GRACE_S = 60             # node: how long the head must stay unreachable
 PING_TIMEOUT_S = 90      # a request may wait behind a long prefill
-DEFAULTS = {"RAGSPARK_HEAD_IP": "192.168.100.10", "RAGSPARK_NODE_IP": "192.168.100.11"}
 
 
 # ------------------------------------------------------------------ decisions (no I/O)
@@ -100,16 +97,6 @@ def rank_state(project):
     return names[0], (parts[0], started_epoch(parts[1]), parts[2])
 
 
-def http_ok(url, body=None, timeout=5):
-    data = json.dumps(body).encode() if body is not None else None
-    req = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json"})
-    try:
-        with urllib.request.urlopen(req, timeout=timeout) as r:
-            return 200 <= r.status < 300
-    except Exception:      # refused, timed out, HTTP error: all mean "not answering"
-        return False
-
-
 # ------------------------------------------------------------------ the command
 
 def _load_state(path):
@@ -133,33 +120,35 @@ def watch(args):
     if manifest is None or manifest.status != "installed":
         return 0                                   # nothing installed (yet): nothing to watch
     config = manifest.config
-    entry = catalog.entry(catalog.load(), "llm", config.get("llm")) or {}
-    if "stack" not in (entry.get("modes") or []):
+    if not stackmode.is_stack(config.get("llm")):
         return 0                                   # single mode
-    role = config.get("role", "head")
-    env = dict(DEFAULTS)
-    env.update(read_env(os.path.join(paths.compose_dir(), ".env")))
+    entry = catalog.entry(catalog.load(), "llm", config.get("llm")) or {}
+    role = paths.role()
+    head_ip, _ = stackmode.addresses(config)
+    try:
+        head_ip = read_env(os.path.join(paths.compose_dir(), ".env")).get("RAGSPARK_HEAD_IP") or head_ip
+    except OSError:
+        pass
     state_path = os.path.join(paths.install_dir(), "watch.json")
     state = _load_state(state_path)
 
+    name, rank = rank_state(paths.project())
     if role == "node":
-        name, rank = rank_state(NODE_PROJECT)
-        head_ok = http_ok("http://%s:8000/health" % env["RAGSPARK_HEAD_IP"])
+        head_ok = stackmode.http_ok("http://%s:8000/health" % head_ip)
         state, action = decide_node(state, rank, head_ok, time.time())
         reason = ui.t("watch_head_lost", s=GRACE_S)
     else:
-        name, rank = rank_state(paths.PROJECT)
-        url = "http://%s:8000/v1/chat/completions" % env["RAGSPARK_HEAD_IP"]
+        url = "http://%s:8000/v1/chat/completions" % head_ip
         body = {"model": entry.get("served_name") or config.get("llm"), "max_tokens": 1, "temperature": 0,
                 "messages": [{"role": "user", "content": "ping"}]}
-        state, action = decide_head(state, rank, lambda: http_ok(url, body, timeout=PING_TIMEOUT_S))
+        state, action = decide_head(state, rank, lambda: stackmode.http_ok(url, body, timeout=PING_TIMEOUT_S))
         reason = ui.t("watch_no_answer", n=PING_FAILS)
     if action == "restart" and name:
         code, out = run(["docker", "restart", "-t", "30", name])
         ui.status("DO" if code == 0 else "FAIL", ui.t("watch_restarted", name=name, reason=reason)
                   + ("" if code == 0 else ": " + out.strip()[-200:]))
         if code == 0 and role == "node":
-            _, fresh = rank_state(NODE_PROJECT)
+            _, fresh = rank_state(paths.project())
             if fresh:
                 state["rank_started"] = fresh[1]
     _save_state(state_path, state)

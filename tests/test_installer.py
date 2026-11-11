@@ -539,3 +539,93 @@ class EndToEnd(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def fake_cable(prefix):
+    """/sys and /dev of a unit with a working QSFP cable (tests/fakebin/ip names its addresses)."""
+    for name, value in (("operstate", "up"), ("speed", "200000"), ("mtu", "9000")):
+        path = os.path.join(prefix, "sys", "class", "net", "enp1s0f1np1", name)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w") as f:
+            f.write(value + "\n")
+    os.makedirs(os.path.join(prefix, "dev", "infiniband"), exist_ok=True)
+    for dev in ("rocep1s0f1", "roceP2p1s0f1"):
+        path = os.path.join(prefix, "sys", "class", "infiniband", dev, "ports", "1", "state")
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w") as f:
+            f.write("4: ACTIVE\n")
+
+
+@unittest.skipUnless(os.environ.get("RAGSPARK_TEST_COMPOSE"), "set RAGSPARK_TEST_COMPOSE to a compose binary")
+class NodeInstall(unittest.TestCase):
+    """install --role node -> status, llm refused -> uninstall, with fake docker/systemctl/ip."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+        self.state = os.path.join(self.tmp, "state.json")
+        vllm = "vllm/vllm-openai:v0.27.1-aarch64@sha256:" + "1c8e60a0841b333c700488cb029d3664807249da0c071e862191b00fe34b228c"
+        json.dump({"images": [vllm], "calls": [], "containers": False, "weights_complete": []}, open(self.state, "w"))
+        os.makedirs(os.path.join(self.tmp, "opt"))
+        fake_cable(self.tmp)
+        self.env = dict(os.environ, RAGSPARK_PREFIX=self.tmp, RAGSPARK_ALLOW_NONROOT="1",
+                        FAKE_STATE=self.state, FAKE_COMPOSE=os.environ["RAGSPARK_TEST_COMPOSE"],
+                        PATH=os.path.join(ROOT, "tests", "fakebin") + os.pathsep + os.environ["PATH"],
+                        LANG="ru_RU.UTF-8", RAGSPARK_RETRY_DELAY="0")
+
+    def ragspark(self, *args):
+        p = subprocess.run([sys.executable, os.path.join(ROOT, "installer", "ragspark.py")] + list(args),
+                           env=self.env, capture_output=True, text=True, stdin=subprocess.DEVNULL)
+        return p.returncode, p.stdout + p.stderr
+
+    def test_node_install_status_uninstall(self):
+        code, out = self.ragspark("install", "--role", "node", "--yes", "--no-network",
+                                  "--models-dir", "/srv/ragspark/hf-cache")
+        self.assertEqual(code, 0, out)
+        self.assertIn("Кабель: enp1s0f1np1 192.168.100.11, 200 Гбит/с, MTU 9000", out)
+        self.assertIn("Теперь на головном узле (192.168.100.10): sudo ragspark llm deepseek-v4-flash-vision", out)
+        inst = os.path.join(self.tmp, "opt", "ragspark")
+        m = json.load(open(os.path.join(inst, "manifest.json")))
+        self.assertEqual((m["status"], m["config"]["role"], m["config"]["llm"]),
+                         ("installed", "node", "deepseek-v4-flash-vision"))
+        self.assertEqual(sorted(m["models_downloaded"]), ["BAAI/bge-reranker-v2-m3", "deepseek-ai/DeepSeek-V4-Flash-Vision-Exp",
+                                                          "deepvk/USER-bge-m3"])
+        revisions = json.load(open(self.state))["weights_revisions"]
+        self.assertEqual(revisions["deepseek-ai/DeepSeek-V4-Flash-Vision-Exp"], "6821d6ad3681a4b137b066b76094fa82ebd0a380")
+        self.assertTrue(any("vllm-gb10@sha256:" in ref for ref in m["images_pulled"]))
+        env_path = os.path.join(inst, "compose", "node", ".env")
+        env = sysutil.read_env(env_path)
+        self.assertEqual(env["COMPOSE_FILE"], "compose.yaml:llm/deepseek-v4-flash-vision.yaml")
+        self.assertEqual((env["RAGSPARK_HEAD_IP"], env["RAGSPARK_NODE_IP"], env["RAGSPARK_CABLE_IF"]),
+                         ("192.168.100.10", "192.168.100.11", "enp1s0f1np1"))
+        self.assertTrue(env["RAGSPARK_TZ"])
+        self.assertNotIn("MYSQL_PASSWORD", env)                             # the node keeps no data
+        self.assertEqual(os.stat(env_path).st_mode & 0o777, 0o600)
+        self.assertFalse(os.path.exists(os.path.join(inst, "compose", ".env")))
+        etc = os.path.join(self.tmp, "etc", "systemd", "system")
+        self.assertIn("WorkingDirectory=/opt/ragspark/compose/node", open(os.path.join(etc, "ragspark.service")).read())
+        self.assertIn("ragspark.py watch", open(os.path.join(etc, "ragspark-watch.service")).read())
+        self.assertIn("OnUnitActiveSec=30s", open(os.path.join(etc, "ragspark-watch.timer")).read())
+        calls = json.load(open(self.state))["calls"]
+        self.assertTrue(any(c.startswith("compose up -d --wait") for c in calls))
+        self.assertFalse([c for c in calls if c.startswith("compose exec")])  # no RAGFlow here
+        self.assertIn("enable --now ragspark-watch.timer", open(self.state + ".systemctl").read())
+
+        code, out = self.ragspark("llm", "qwen-3.8-27b-nvfp4", "--yes")
+        self.assertEqual(code, 1, out)
+        self.assertIn("Это узел режима stack", out)
+        code, out = self.ragspark("status")
+        self.assertIn("Роль: узел режима stack; головной 192.168.100.10", out)
+
+        code, out = self.ragspark("uninstall", "--yes")
+        self.assertEqual(code, 0, out)
+        self.assertFalse(os.path.exists(inst))
+        for unit in ("ragspark.service", "ragspark-watch.service", "ragspark-watch.timer"):
+            self.assertFalse(os.path.exists(os.path.join(etc, unit)), unit)
+        self.assertIn("disable --now ragspark-watch.timer", open(self.state + ".systemctl").read())
+
+    def test_a_single_mode_llm_is_refused_on_the_node(self):
+        code, out = self.ragspark("install", "--role", "node", "--yes", "--no-network", "--llm", "qwen-3.8-27b-nvfp4")
+        self.assertNotEqual(code, 0)
+        self.assertIn("работает на одном узле", out)
+        self.assertFalse(os.path.exists(os.path.join(self.tmp, "opt", "ragspark", "manifest.json")))

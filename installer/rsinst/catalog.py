@@ -74,6 +74,9 @@ def facts(e, total_gib):
     share = e.get("memory_share")
     if isinstance(share, (int, float)) and total_gib:
         parts.append(ui.t("llm_memory", gib=share * total_gib))
+    nodes = e.get("nodes")
+    if isinstance(nodes, int) and nodes > 1:
+        parts.append(ui.t("llm_nodes", n=nodes, gib=e.get("memory_gib_per_node", "?")))
     features = [ui.t(key) for key, field in (("llm_tools", "tool_calling"), ("llm_vision", "vision"))
                 if e.get(field) is True]
     if features:

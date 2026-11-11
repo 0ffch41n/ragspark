@@ -4,7 +4,7 @@ import os
 import time
 import urllib.request
 
-from . import paths, ui
+from . import paths, stackmode, ui
 from .install import compose_config, step_acceptance, vllm_image
 from .manifest import Manifest
 from .preflight import gpu_reload_test, run_checks
@@ -44,12 +44,19 @@ def status(args):
             ui.say(ui.t("status_foreign", dir=others[0]["dir"] or "?"))
         return 1
     c = m.config
-    port = int(c.get("http_port", 80))
+    node = c.get("role") == "node"
+    head_ip, node_ip = stackmode.addresses(c)
     ui.header(ui.t("status_title"))
     ui.say(ui.t("status_version", version=m.data.get("version", "?"), date=m.data.get("finished", m.data.get("started", "?"))))
     ui.say(ui.t("status_llm", llm=c.get("llm", "?")))
-    ui.say(ui.t("status_url", url="http://%s%s/" % (host_address(), "" if port == 80 else ":%d" % port),
-                email=c.get("admin_email", "?")))
+    if node:
+        ui.say(ui.t("status_node", head=head_ip))
+    else:
+        port = int(c.get("http_port", 80))
+        ui.say(ui.t("status_url", url="http://%s%s/" % (host_address(), "" if port == 80 else ":%d" % port),
+                    email=c.get("admin_email", "?")))
+        if stackmode.is_stack(c.get("llm")):
+            ui.say(ui.t("status_stack", node=node_ip))
     active, substate = unit_state()
     code2, out2 = run(["systemctl", "is-enabled", paths.UNIT_NAME])
     ui.say(ui.t("status_service", active=active, enabled=out2.strip() or "?"))
@@ -63,6 +70,11 @@ def status(args):
     for svc, state, health in rows:
         good = state == "running" and health in ("healthy", "")
         ui.status("OK" if good else "WARN", "%-12s %s%s" % (svc, state, " (%s)" % health if health else ""))
+    if node:
+        # The node has no web interface: is the head's half of the LLM answering?
+        ok = stackmode.http_ok("http://%s:8000/health" % head_ip)
+        ui.status("OK" if ok else "WARN", ui.t("status_head_api" if ok else "status_head_api_down", head=head_ip))
+        return 0 if ok else 1
     try:
         with urllib.request.urlopen(_health_url(c), timeout=5) as r:
             data = json.loads(r.read().decode())
@@ -133,7 +145,7 @@ def stop_unready():
     the vLLM services leave each other without memory for their cache. Healthy
     containers are left alone, so a running stack is not interrupted.
     """
-    code, out = run(["docker", "ps", "--filter", "label=com.docker.compose.project=" + paths.PROJECT,
+    code, out = run(["docker", "ps", "--filter", "label=com.docker.compose.project=" + paths.project(),
                      "--format", "{{.Names}}\t{{.State}}\t{{.Status}}"])
     if code != 0:
         ui.status("WARN", out.strip()[-300:])
@@ -141,7 +153,10 @@ def stop_unready():
     names = []
     for line in out.splitlines():
         parts = line.split("\t")
-        if len(parts) == 3 and parts[1] in ("running", "restarting") and "(healthy)" not in parts[2]:
+        # Running without a health check (the node's headless LLM half) counts as ready.
+        unready = parts[1] == "restarting" or "(health: starting)" in parts[2] or "(unhealthy)" in parts[2] \
+            if len(parts) == 3 else False
+        if unready:
             names.append(parts[0])
     if names:
         ui.status("DO", ui.t("prestart_stopping", names=", ".join(sorted(names))))

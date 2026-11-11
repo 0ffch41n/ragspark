@@ -6,12 +6,11 @@ import shutil
 import sys
 import time
 
-from . import catalog, paths, ui
+from . import catalog, paths, stackmode, ui
 from .manifest import Manifest, make_dirs
-from .preflight import run_checks
-from .sysutil import compose, host_address, mem_total_gib, project_containers, read_env, run, set_env
+from .preflight import cable_interface, run_checks
+from .sysutil import compose, host_address, host_timezone, mem_total_gib, project_containers, read_env, run, set_env
 
-TOTAL = 11
 DEFAULT_EMAIL = "admin@ragspark.local"
 
 UNIT = """[Unit]
@@ -38,6 +37,31 @@ TimeoutStopSec=5min
 
 [Install]
 WantedBy=multi-user.target
+"""
+
+# Stack mode: `ragspark watch` keeps the two halves of the LLM together (installer/rsinst/watch.py).
+# Installed on every unit; in single mode it returns at once.
+WATCH_SERVICE_UNIT = """[Unit]
+Description=RAGSpark: keep the two halves of a stack-mode LLM together
+Documentation=https://github.com/0ffch41n/ragspark
+After=docker.service
+
+[Service]
+Type=oneshot
+ExecStart={python} {install_dir}/installer/ragspark.py watch
+"""
+
+WATCH_TIMER_UNIT = """[Unit]
+Description=RAGSpark: run ragspark watch every 30 seconds
+Documentation=https://github.com/0ffch41n/ragspark
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=30s
+AccuracySec=5s
+
+[Install]
+WantedBy=timers.target
 """
 
 CLI_SCRIPT = """#!/bin/sh
@@ -125,11 +149,16 @@ def llm_choices():
     return names
 
 
-def llm_offer():
-    """(catalog or None, every LLM file, the files offered for single mode); default first."""
+def llm_offer(role="head"):
+    """(catalog or None, every LLM file, the files offered); default first. The head is offered the
+    single-mode LLMs, then the stack-mode ones (they need the node); the node only stack-mode LLMs."""
     files = llm_choices()
     cat = catalog.load()
-    return cat, files, catalog.offered(cat, files)
+    stack = [f for f in catalog.offered(cat, files, "stack") if stackmode.is_stack(f)]
+    if role == "node":
+        return cat, files, stack
+    single = [f for f in catalog.offered(cat, files) if not stackmode.is_stack(f)]
+    return cat, files, single + stack
 
 
 def choose_llm(cat, choices, files):
@@ -166,11 +195,16 @@ def gather_config(args, manifest):
     if manifest is not None:
         saved = dict(manifest.config)
         given = {"admin_email": args.admin_email, "http_port": args.http_port, "http_bind": args.http_bind,
-                 "models_dir": args.models_dir and os.path.abspath(args.models_dir), "llm": args.llm}
+                 "models_dir": args.models_dir and os.path.abspath(args.models_dir), "llm": args.llm,
+                 "role": args.role, "head_ip": args.head_ip, "node_ip": args.node_ip}
         ignored = [k for k, v in given.items() if v is not None and str(v) != str(saved.get(k))]
         if ignored:
             ui.status("WARN", ui.t("resume_flags_ignored", flags=", ".join(ignored)))
         return saved
+    role = args.role or "head"
+    cable = {"head_ip": args.head_ip or stackmode.DEFAULT_HEAD_IP, "node_ip": args.node_ip or stackmode.DEFAULT_NODE_IP}
+    if role == "node":
+        return gather_node_config(args, cable)
     if ui.interactive():
         ui.header(ui.t("cfg_title"))
     email = args.admin_email or ui.ask(ui.t("cfg_email"), DEFAULT_EMAIL)
@@ -184,17 +218,43 @@ def gather_config(args, manifest):
     llm = args.llm or (choices[0] if len(choices) == 1 else choose_llm(cat, choices, files))
     if llm not in choices:
         raise SystemExit(ui.t("cfg_llm_bad", llm=llm, choices=", ".join(choices)))
-    return {"lang": ui.lang(), "admin_email": email, "http_bind": args.http_bind or "0.0.0.0",
-            "http_port": int(port), "models_dir": os.path.abspath(models_dir), "llm": llm}
+    config = {"lang": ui.lang(), "role": "head", "admin_email": email, "http_bind": args.http_bind or "0.0.0.0",
+              "http_port": int(port), "models_dir": os.path.abspath(models_dir), "llm": llm}
+    config.update(cable)
+    return config
+
+
+def gather_node_config(args, cable):
+    """The node of stack mode: no web interface and no data, only the models and the cable."""
+    cat, files, choices = llm_offer("node")
+    if not choices:
+        raise SystemExit(ui.t("cfg_no_stack_llm"))
+    llm = args.llm or choices[0]
+    if llm not in choices:
+        raise SystemExit(ui.t("cfg_llm_not_stack", llm=llm, choices=", ".join(choices)))
+    models_dir = args.models_dir or ui.ask(ui.t("cfg_models_dir"), paths.DEFAULT_MODELS_DIR)
+    config = {"lang": ui.lang(), "role": "node", "models_dir": os.path.abspath(models_dir), "llm": llm}
+    config.update(cable)
+    return config
 
 
 def show_plan(config, resume):
     if resume:
         ui.say(ui.t("plan_resume"))
-    for line in ("plan_files", "plan_models", "plan_service", "plan_cli", "plan_docker", "plan_downloads"):
+    head_ip, node_ip = stackmode.addresses(config)
+    node = config.get("role") == "node"
+    lines = (("plan_node_files", "plan_models", "plan_service", "plan_watch", "plan_cli", "plan_node_docker",
+              "plan_downloads") if node else
+             ("plan_files", "plan_models", "plan_service", "plan_watch", "plan_cli", "plan_docker", "plan_downloads"))
+    for line in lines:
         ui.say("  - " + ui.t(line, dir=paths.INSTALL_DIR, models=config["models_dir"], unit=paths.UNIT_PATH,
-                              cli=paths.CLI_PATH))
-    ui.say("  " + ui.t("plan_settings", email=config["admin_email"], port=config["http_port"], llm=config["llm"]))
+                              cli=paths.CLI_PATH, timer=paths.WATCH_TIMER_PATH, llm=config["llm"], ip=node_ip))
+    if node:
+        ui.say("  " + ui.t("plan_node_settings", head=head_ip, node=node_ip, llm=config["llm"]))
+    else:
+        ui.say("  " + ui.t("plan_settings", email=config["admin_email"], port=config["http_port"], llm=config["llm"]))
+        if stackmode.is_stack(config["llm"]):
+            ui.say("  " + ui.t("plan_stack_settings", node=node_ip, llm=config["llm"]))
     for line in catalog.plan_lines(catalog.load(), config["llm"]):
         ui.say("  " + line)
     ui.say("  " + ui.t("plan_untouched"))
@@ -242,8 +302,21 @@ def source_version():
     return out.strip().splitlines()[-1] if code == 0 and out.strip() else "unknown"
 
 
+def cable_settings(config):
+    """.env values of stack mode: the two ends of the cable and this unit's interface on it."""
+    head_ip, node_ip = stackmode.addresses(config)
+    own = node_ip if config.get("role") == "node" else head_ip
+    values = [("RAGSPARK_HEAD_IP", head_ip), ("RAGSPARK_NODE_IP", node_ip)]
+    iface = cable_interface(own)
+    if iface:
+        values.append(("RAGSPARK_CABLE_IF", iface))
+    return values
+
+
 def step_settings(config):
     env = os.path.join(paths.compose_dir(), ".env")
+    if config.get("role") == "node":
+        return node_settings(config, env)
     if not os.path.exists(env):
         code, out = run(["bash", os.path.join(paths.compose_dir(), "init-env.sh")])
         if code != 0:
@@ -252,15 +325,39 @@ def step_settings(config):
         ui.status("OK", ui.t("env_created"))
     else:
         ui.status("OK", ui.t("env_kept"))
-    for key, value in (("COMPOSE_FILE", "compose.yaml:llm/%s.yaml" % config["llm"]),
+    for key, value in [("COMPOSE_FILE", stackmode.compose_file(config["llm"])),
                        ("RAGSPARK_HTTP_BIND", config["http_bind"]),
                        ("RAGSPARK_HTTP_PORT", config["http_port"]),
                        ("RAGSPARK_HF_CACHE", config["models_dir"]),
                        ("RAGSPARK_LANG", config["lang"]),
-                       ("DEFAULT_SUPERUSER_EMAIL", config["admin_email"])):
+                       ("DEFAULT_SUPERUSER_EMAIL", config["admin_email"])] + cable_settings(config):
         set_env(env, key, value)
     tz = read_env(env).get("RAGSPARK_TZ", "?")
     ui.status("OK", ui.t("env_values", email=config["admin_email"], port=config["http_port"], tz=tz))
+    code, out = compose(["config", "--quiet"])
+    if code != 0:
+        ui.status("FAIL", ui.t("compose_invalid", err=out.strip()[-400:]))
+        return False
+    return True
+
+
+def node_settings(config, env):
+    """compose/node/.env: no passwords (the node keeps no data), the cable and the time zone."""
+    if not os.path.exists(env):
+        fd = os.open(env, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(fd, "w") as f:
+            f.write("# RAGSpark node of stack mode, written by the installer (compose/node/compose.yaml).\n")
+        ui.status("OK", ui.t("env_created"))
+    else:
+        ui.status("OK", ui.t("env_kept"))
+    values = [("COMPOSE_FILE", stackmode.compose_file(config["llm"], "node")),
+              ("RAGSPARK_HF_CACHE", config["models_dir"]),
+              ("RAGSPARK_TZ", read_env(env).get("RAGSPARK_TZ") or host_timezone())] + cable_settings(config)
+    for key, value in values:
+        set_env(env, key, value)
+    head_ip, node_ip = stackmode.addresses(config)
+    ui.status("OK", ui.t("env_node_values", head=head_ip, node=node_ip,
+                         iface=read_env(env).get("RAGSPARK_CABLE_IF", "?")))
     code, out = compose(["config", "--quiet"])
     if code != 0:
         ui.status("FAIL", ui.t("compose_invalid", err=out.strip()[-400:]))
@@ -280,7 +377,7 @@ def compose_config(files=()):
 
 def llm_files(llm):
     """compose -f options for `llm` instead of the files .env names (`ragspark llm`)."""
-    return ["-f", "compose.yaml", "-f", "llm/%s.yaml" % llm]
+    return stackmode.compose_args(llm, paths.role())
 
 
 def step_images(manifest, files=()):
@@ -309,7 +406,14 @@ def step_images(manifest, files=()):
 
 
 def vllm_image(cfg):
-    return ((cfg.get("services") or {}).get("vllm-llm") or {}).get("image")
+    """An image with vLLM, Python and huggingface_hub: the GPU check and the weights helper run in it.
+    The LLM's (a relay of stack mode runs the LLM half's image), else the half's, else the embedding model's."""
+    services = cfg.get("services") or {}
+    for name in ("vllm-llm", stackmode.RANK, "vllm-embed"):
+        image = (services.get(name) or {}).get("image")
+        if image:
+            return image
+    return None
 
 
 def step_gpu(cfg):
@@ -396,8 +500,8 @@ def step_service(manifest):
     unit = paths.host(paths.UNIT_PATH)
     docker = shutil.which("docker") or "/usr/bin/docker"
     python = shutil.which("python3") or "/usr/bin/python3"
-    content = UNIT.format(compose_dir=os.path.join(paths.INSTALL_DIR, "compose"), docker=docker,
-                          python=python, install_dir=paths.INSTALL_DIR)
+    compose_dir = os.path.join(paths.INSTALL_DIR, "compose", *(["node"] if paths.role() == "node" else []))
+    content = UNIT.format(compose_dir=compose_dir, docker=docker, python=python, install_dir=paths.INSTALL_DIR)
     current = None
     if os.path.exists(unit):
         with open(unit) as f:
@@ -421,6 +525,39 @@ def step_service(manifest):
         return False
     manifest.set("unit", paths.UNIT_NAME)
     ui.status("OK", ui.t("service_ok", unit=paths.UNIT_NAME))
+    return True
+
+
+def _write_unit(path, content, manifest):
+    """Write a systemd unit file; True when an existing file changed (systemd must reload it)."""
+    current = None
+    if os.path.exists(path):
+        with open(path) as f:
+            current = f.read()
+    if current == content:
+        return False
+    make_dirs(os.path.dirname(path), manifest)
+    with open(path, "w") as f:
+        f.write(content)
+    manifest.add_file(path)
+    return current is not None
+
+
+def step_watch(manifest):
+    """The timer of `ragspark watch`. New unit files need no daemon-reload (systemd loads them when
+    first used), so this also runs on a live stack (`ragspark llm`); a changed file does."""
+    python = shutil.which("python3") or "/usr/bin/python3"
+    changed = _write_unit(paths.host(paths.WATCH_SERVICE_PATH),
+                          WATCH_SERVICE_UNIT.format(python=python, install_dir=paths.INSTALL_DIR), manifest)
+    changed = _write_unit(paths.host(paths.WATCH_TIMER_PATH), WATCH_TIMER_UNIT, manifest) or changed
+    if changed:
+        run(["systemctl", "daemon-reload"])
+    code, out = run(["systemctl", "enable", "--now", paths.WATCH_TIMER])
+    if code != 0:
+        ui.status("FAIL", ui.t("watch_failed", timer=paths.WATCH_TIMER, err=out.strip()[-300:]))
+        return False
+    manifest.set("timer", paths.WATCH_TIMER)
+    ui.status("OK", ui.t("watch_installed", timer=paths.WATCH_TIMER))
     return True
 
 
@@ -482,6 +619,16 @@ def finish(config, manifest, sample=True):
     ui.say(ui.t("done_commands"))
 
 
+def finish_node(config, manifest):
+    manifest.data["status"] = "installed"
+    manifest.data["finished"] = time.strftime("%Y-%m-%dT%H:%M:%S%z")
+    manifest.save()
+    head_ip, node_ip = stackmode.addresses(config)
+    ui.header(ui.t("node_done_title"))
+    ui.say(ui.t("node_done_wait", llm=config["llm"], ip=node_ip))
+    ui.say(ui.t("node_done_next", head=head_ip, llm=config["llm"]))
+
+
 def install(args):
     manifest = Manifest.load()
     if manifest is not None and manifest.status == "installed":
@@ -490,8 +637,35 @@ def install(args):
     resume = manifest is not None
     config = gather_config(args, manifest)
     ui.set_lang(config["lang"])
+    paths.set_role(config.get("role", "head"))
+    node = paths.role() == "node"
+    if node:
+        steps = [
+            ("st_files", lambda: step_files(manifest)),
+            ("st_settings", lambda: step_settings(config)),
+            ("st_images", lambda: step_images(manifest)),
+            ("st_gpu", lambda: step_gpu(compose_config() or {})),
+            ("st_weights", lambda: step_weights(compose_config() or {}, config, manifest)),
+            ("st_service", lambda: step_service(manifest)),
+            ("st_watch", lambda: step_watch(manifest)),
+            ("st_start", step_start),
+        ]
+    else:
+        steps = [
+            ("st_files", lambda: step_files(manifest)),
+            ("st_settings", lambda: step_settings(config)),
+            ("st_images", lambda: step_images(manifest)),
+            ("st_gpu", lambda: step_gpu(compose_config() or {})),
+            ("st_weights", lambda: step_weights(compose_config() or {}, config, manifest)),
+            ("st_service", lambda: step_service(manifest)),
+            ("st_watch", lambda: step_watch(manifest)),
+            ("st_start", step_start),
+            ("st_models", step_models),
+            ("st_acceptance", lambda: step_acceptance(config["lang"], assistant_only=args.skip_acceptance)),
+        ]
+    total = len(steps) + 2
 
-    ui.step(1, TOTAL, ui.t("st_check"))
+    ui.step(1, total, ui.t("st_check"))
     report = run_checks(config, manifest, network=not args.no_network, header=False)
     if report.blockers:
         if args.force:
@@ -499,7 +673,7 @@ def install(args):
         return 1
     if report.failed and not args.force:
         return 1
-    ui.step(2, TOTAL, ui.t("st_plan"))
+    ui.step(2, total, ui.t("st_plan"))
     show_plan(config, resume)
     if not ui.confirm(ui.t("plan_confirm"), default=True):
         ui.say(ui.t("cancelled"))
@@ -512,21 +686,13 @@ def install(args):
     manifest.save()
     ui.open_log(os.path.join(paths.install_dir(), "install.log"))
 
-    steps = [
-        ("st_files", lambda: step_files(manifest)),
-        ("st_settings", lambda: step_settings(config)),
-        ("st_images", lambda: step_images(manifest)),
-        ("st_gpu", lambda: step_gpu(compose_config() or {})),
-        ("st_weights", lambda: step_weights(compose_config() or {}, config, manifest)),
-        ("st_service", lambda: step_service(manifest)),
-        ("st_start", step_start),
-        ("st_models", step_models),
-        ("st_acceptance", lambda: step_acceptance(config["lang"], assistant_only=args.skip_acceptance)),
-    ]
     for i, (title, func) in enumerate(steps, start=3):
-        ui.step(i, TOTAL, ui.t(title))
+        ui.step(i, total, ui.t(title))
         if not func():
             ui.say("\n" + ui.t("install_failed", log=os.path.join(paths.INSTALL_DIR, "install.log")))
             return 1
-    finish(config, manifest, sample=not args.skip_acceptance)
+    if node:
+        finish_node(config, manifest)
+    else:
+        finish(config, manifest, sample=not args.skip_acceptance)
     return 0

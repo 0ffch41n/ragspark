@@ -54,6 +54,7 @@ class Relay(unittest.TestCase):
             await target.wait_closed()
             reader, writer = await asyncio.open_connection("127.0.0.1", lport)  # target gone now
             gone = await asyncio.wait_for(reader.read(1 << 16), 5)
+            writer.close()
             task.cancel()
             return got, gone
         got, gone = asyncio.run(scenario())
@@ -206,3 +207,109 @@ class WatchNode(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class Roles(unittest.TestCase):
+    def setUp(self):
+        from rsinst import paths
+        self.paths = paths
+        self.addCleanup(paths.set_role, "head")
+
+    def test_the_node_runs_compose_in_its_own_directory_and_project(self):
+        p = self.paths
+        p.set_role("node")
+        self.assertTrue(p.compose_dir().endswith(os.path.join("compose", "node")))
+        self.assertEqual(p.project(), "ragspark-node")
+        p.set_role("anything else")
+        self.assertTrue(p.compose_dir().endswith("compose"))
+        self.assertEqual(p.project(), "ragspark")
+
+    def test_compose_files_per_mode_and_role(self):
+        from rsinst import stackmode
+        big, small = "deepseek-v4-flash-vision", "qwen-3.8-27b-nvfp4"
+        self.assertTrue(stackmode.is_stack(big))
+        self.assertFalse(stackmode.is_stack(small))
+        self.assertFalse(stackmode.is_stack(""))
+        self.assertEqual(stackmode.compose_file(big), "compose.yaml:stack.yaml:llm/%s.yaml" % big)
+        self.assertEqual(stackmode.compose_file(big, "node"), "compose.yaml:llm/%s.yaml" % big)
+        self.assertEqual(stackmode.compose_file(small), "compose.yaml:llm/%s.yaml" % small)
+        self.assertEqual(stackmode.compose_args(big),
+                         ["-f", "compose.yaml", "-f", "stack.yaml", "-f", "llm/%s.yaml" % big])
+        for llm, role in ((big, "head"), (big, "node"), (small, "head")):
+            base = os.path.join(ROOT, "compose", *(["node"] if role == "node" else []))
+            for f in stackmode.compose_file(llm, role).split(":"):
+                self.assertTrue(os.path.exists(os.path.join(base, f)), (llm, role, f))
+        self.assertEqual(stackmode.addresses({}), ("192.168.100.10", "192.168.100.11"))
+        self.assertEqual(stackmode.addresses({"node_ip": "10.0.0.2"}), ("192.168.100.10", "10.0.0.2"))
+
+
+class CableChecks(unittest.TestCase):
+    """preflight.check_cable reads /sys and /dev through the test prefix."""
+
+    def setUp(self):
+        import shutil
+        import tempfile
+        from unittest import mock
+        from rsinst import paths, preflight
+        self.preflight = preflight
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+        patcher = mock.patch.object(paths, "PREFIX", self.tmp)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        lines = ("1: lo    inet 127.0.0.1/8 scope host lo\\\n"
+                 "3: enp1s0f1np1    inet 192.168.100.10/24 brd 192.168.100.255 scope global enp1s0f1np1\\\n")
+        patcher = mock.patch.object(preflight, "run", return_value=(0, lines))
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def sys(self, rel, text):
+        path = os.path.join(self.tmp, rel)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w") as f:
+            f.write(text + "\n")
+
+    def report(self, ip="192.168.100.10"):
+        from rsinst import ui
+        r = self.preflight.Report()
+        with open(os.devnull, "w") as null, __import__("contextlib").redirect_stdout(null):
+            iface = self.preflight.check_cable(r, ip)
+        return iface, [k for k, _ in r.rows], ui
+
+    def link(self, speed="200000", mtu="9000", state="up", ports=2):
+        for name, value in (("operstate", state), ("speed", speed), ("mtu", mtu)):
+            self.sys("sys/class/net/enp1s0f1np1/" + name, value)
+        os.makedirs(os.path.join(self.tmp, "dev", "infiniband"), exist_ok=True)
+        for i in range(ports):
+            self.sys("sys/class/infiniband/roce%d/ports/1/state" % i, "4: ACTIVE")
+
+    def test_a_good_cable(self):
+        self.link()
+        self.assertEqual(self.report()[:2], ("enp1s0f1np1", ["OK", "OK"]))
+
+    def test_no_address_no_rdma_slow_or_half(self):
+        self.assertEqual(self.report("10.9.9.9")[:2], (None, ["FAIL"]))
+        self.link(speed="13000")
+        self.assertEqual(self.report()[1], ["WARN", "OK"])                 # the ~13 Gb/s state after a re-plug
+        self.link(mtu="1500")
+        self.assertEqual(self.report()[1], ["WARN", "OK"])
+        os.remove(os.path.join(self.tmp, "sys/class/infiniband/roce1/ports/1/state"))
+        self.link(ports=1)
+        self.assertEqual(self.report()[1], ["OK", "WARN"])                 # one half of the cable
+        os.rmdir(os.path.join(self.tmp, "dev", "infiniband"))
+        self.assertEqual(self.report()[1], ["OK", "FAIL"])
+        self.link(state="down")
+        self.assertEqual(self.report()[1][0], "FAIL")
+
+
+@unittest.skipUnless(HAVE_YAML, "needs python3-yaml")
+class Menu(unittest.TestCase):
+    def test_the_head_is_offered_both_modes_and_the_node_only_stack(self):
+        cat, files, head = install.llm_offer()
+        self.assertEqual(head, ["qwen-3.8-27b-nvfp4", "qwen-3.6-35b-a3b-nvfp4", "deepseek-v4-flash-vision"])
+        self.assertEqual(install.llm_offer("node")[2], ["deepseek-v4-flash-vision"])
+        from rsinst import catalog, ui
+        ui.set_lang("en")
+        facts = catalog.facts(catalog.entry(cat, "llm", "deepseek-v4-flash-vision"), 121)
+        self.assertIn("2 units, ~92 GiB each", facts)
+        self.assertIn("MIT", facts)

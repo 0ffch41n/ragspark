@@ -10,7 +10,7 @@ import ssl
 import sys
 import time
 
-from . import paths, ui
+from . import paths, stackmode, ui
 from .sysutil import mem_total_gib, project_containers, run, version_tuple
 
 MIN_DOCKER = (24, 0, 0)
@@ -194,7 +194,7 @@ def check_existing(r, manifest):
     if os.path.exists(paths.host(paths.UNIT_PATH)):
         r.block(ui.t("pf_unit_exists", unit=paths.UNIT_PATH))
     rows = project_containers()
-    code, out = run(["docker", "volume", "ls", "--filter", "label=com.docker.compose.project=" + paths.PROJECT,
+    code, out = run(["docker", "volume", "ls", "--filter", "label=com.docker.compose.project=" + paths.project(),
                      "--format", "{{.Name}}"])
     volumes = out.split() if code == 0 else []
     if rows:
@@ -204,6 +204,70 @@ def check_existing(r, manifest):
         r.block(ui.t("pf_foreign_volumes", volumes=" ".join(volumes)))
     else:
         r.add("OK", ui.t("pf_no_stack"))
+
+
+# ------------------------------------------------------------------ stack mode: the cable and the node
+
+def cable_interface(ip):
+    """The network interface that holds the address `ip`, or None."""
+    code, out = run(["ip", "-o", "-4", "addr", "show"])
+    for line in out.splitlines() if code == 0 else []:
+        parts = line.split()
+        if len(parts) >= 4 and parts[2] == "inet" and parts[3].split("/")[0] == ip:
+            return parts[1].rstrip(":")
+    return None
+
+
+def _sys(path):
+    try:
+        with open(paths.host(path)) as f:
+            return f.read().strip()
+    except OSError:
+        return ""
+
+
+def check_cable(r, ip):
+    """The cable end at `ip` on this unit: link, speed, MTU, and RDMA. Returns the interface or None."""
+    iface = cable_interface(ip)
+    if iface is None:
+        r.add("FAIL", ui.t("pf_cable_none", ip=ip))
+        return None
+    base = "/sys/class/net/%s/" % iface
+    state, speed, mtu = _sys(base + "operstate"), _sys(base + "speed"), _sys(base + "mtu")
+    gbit = int(speed) // 1000 if speed.lstrip("-").isdigit() and int(speed) > 0 else 0
+    if state != "up":
+        r.add("FAIL", ui.t("pf_cable_down", iface=iface, state=state or "?"))
+    elif gbit < 100:
+        r.add("WARN", ui.t("pf_cable_slow", iface=iface, speed=gbit))
+    elif mtu.isdigit() and int(mtu) < 9000:
+        r.add("WARN", ui.t("pf_cable_mtu", iface=iface, mtu=mtu))
+    else:
+        r.add("OK", ui.t("pf_cable_ok", iface=iface, ip=ip, speed=gbit, mtu=mtu or "?"))
+    if not os.path.isdir(paths.host("/dev/infiniband")):
+        r.add("FAIL", ui.t("pf_rdma_none"))
+    else:
+        ports = glob.glob(paths.host("/sys/class/infiniband/*/ports/*/state"))
+        active = sum(1 for p in ports if "ACTIVE" in _sys(p[len(paths.PREFIX):]))
+        r.add("OK" if active >= 2 else "WARN", ui.t("pf_rdma_ok" if active >= 2 else "pf_rdma_half", n=active))
+    return iface
+
+
+def check_node(r, node_ip):
+    """The node's embedding model and reranker answer on the cable."""
+    for key, port in stackmode.NODE_PORTS:
+        url = "http://%s:%d/health" % (node_ip, port)
+        if stackmode.http_ok(url):
+            r.add("OK", ui.t("pf_node_ok", ip=node_ip, what=ui.t(key)))
+        else:
+            r.add("FAIL", ui.t("pf_node_down", ip=node_ip, what=ui.t(key)))
+
+
+def check_pair(r, config):
+    """Stack mode on the head: the cable, then the node."""
+    head_ip, node_ip = stackmode.addresses(config)
+    iface = check_cable(r, head_ip)
+    check_node(r, node_ip)
+    return iface
 
 
 def handshake(host, family, timeout=20.0):
@@ -253,14 +317,19 @@ def run_checks(config, manifest, network=True, header=True):
     if header:
         ui.header(ui.t("pf_title"))
     r = Report()
+    role = config.get("role", "head")
     check_platform(r)
     check_gpu(r)
     check_memory(r)
     info = check_docker(r)
     check_disk(r, info, config.get("models_dir", paths.DEFAULT_MODELS_DIR))
-    if manifest is None:
+    if manifest is None and role == "head":
         check_port(r, config.get("http_bind", "0.0.0.0"), config.get("http_port", 80))
     check_existing(r, manifest)
+    if role == "node":
+        check_cable(r, stackmode.addresses(config)[1])
+    elif stackmode.is_stack(config.get("llm")):
+        check_pair(r, config)
     if network:
         check_network(r, info)
     if r.failed:

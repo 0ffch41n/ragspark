@@ -1,11 +1,13 @@
 """`ragspark llm`: install with fake system tools, then change the LLM and back, and the rollback.
 Like the installer's end-to-end test it needs a compose binary (RAGSPARK_TEST_COMPOSE)."""
+import http.server
 import json
 import os
 import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 import unittest
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -150,3 +152,123 @@ class SwitchLlm(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+STACK = "deepseek-v4-flash-vision"
+POOL_UP = "compose up -d --wait --wait-timeout 900 --no-deps vllm-embed vllm-rerank"
+RANK_UP = "compose up -d --wait --wait-timeout 2400 --no-deps vllm-llm-rank"
+
+
+class _Health(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200 if self.path == "/health" else 404)
+        self.end_headers()
+
+    def log_message(self, *args):
+        pass
+
+
+@unittest.skipUnless(os.environ.get("RAGSPARK_TEST_COMPOSE"), "set RAGSPARK_TEST_COMPOSE to a compose binary")
+class SwitchStack(unittest.TestCase):
+    """`ragspark llm` between single and stack mode on the head; the node's embedding model and reranker
+    are two local HTTP servers on 127.0.0.1:8001 and :8002 (--node-ip 127.0.0.1)."""
+
+    def setUp(self):
+        self.servers = []
+        for port in (8001, 8002):
+            try:
+                srv = http.server.HTTPServer(("127.0.0.1", port), _Health)
+            except OSError:
+                self.skipTest("port %d is busy" % port)
+            threading.Thread(target=srv.serve_forever, daemon=True).start()
+            self.servers.append(srv)
+            self.addCleanup(srv.server_close)
+            self.addCleanup(srv.shutdown)
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+        self.state = os.path.join(self.tmp, "state.json")
+        vllm = "vllm/vllm-openai:v0.27.1-aarch64@sha256:" + "1c8e60a0841b333c700488cb029d3664807249da0c071e862191b00fe34b228c"
+        json.dump({"images": [vllm], "calls": [], "containers": False,
+                   "weights_complete": ["deepvk/USER-bge-m3"]}, open(self.state, "w"))
+        os.makedirs(os.path.join(self.tmp, "opt"))
+        os.makedirs(os.path.join(self.tmp, "proc", "sys", "vm"))
+        from test_installer import fake_cable
+        fake_cable(self.tmp)
+        self.env = dict(os.environ, RAGSPARK_PREFIX=self.tmp, RAGSPARK_ALLOW_NONROOT="1",
+                        FAKE_STATE=self.state, FAKE_COMPOSE=os.environ["RAGSPARK_TEST_COMPOSE"],
+                        PATH=os.path.join(ROOT, "tests", "fakebin") + os.pathsep + os.environ["PATH"],
+                        LANG="ru_RU.UTF-8", RAGSPARK_RETRY_DELAY="0")
+        code, out = self.ragspark("install", "--yes", "--force", "--no-network", "--models-dir", "/srv/ragspark/hf-cache",
+                                  "--node-ip", "127.0.0.1")
+        self.assertEqual(code, 0, out)
+        self.inst = os.path.join(self.tmp, "opt", "ragspark")
+        self.envfile = os.path.join(self.inst, "compose", ".env")
+
+    def ragspark(self, *args):
+        p = subprocess.run([sys.executable, os.path.join(ROOT, "installer", "ragspark.py")] + list(args),
+                           env=self.env, capture_output=True, text=True, stdin=subprocess.DEVNULL)
+        return p.returncode, p.stdout + p.stderr
+
+    def calls(self, since):
+        return json.load(open(self.state))["calls"][since:]
+
+    def mark(self):
+        return len(json.load(open(self.state))["calls"])
+
+    def set_fake(self, **kw):
+        s = json.load(open(self.state))
+        s.update(kw)
+        json.dump(s, open(self.state, "w"))
+
+    def test_to_stack_and_back(self):
+        before = self.mark()
+        code, out = self.ragspark("llm", STACK, "--yes")
+        self.assertEqual(code, 0, out)
+        env = sysutil.read_env(self.envfile)
+        self.assertEqual(env["COMPOSE_FILE"], "compose.yaml:stack.yaml:llm/%s.yaml" % STACK)
+        self.assertEqual((env["RAGSPARK_NODE_IP"], env["RAGSPARK_CABLE_IF"]), ("127.0.0.1", "enp1s0f1np1"))
+        m = json.load(open(os.path.join(self.inst, "manifest.json")))
+        self.assertEqual(m["config"]["llm"], STACK)
+        self.assertIn("deepseek-ai/DeepSeek-V4-Flash-Vision-Exp", m["models_downloaded"])
+        self.assertEqual(m["timer"], "ragspark-watch.timer")
+        calls = self.calls(before)
+        download = next(i for i, c in enumerate(calls) if "DeepSeek-V4-Flash-Vision-Exp online" in c)
+        order = [download, calls.index("compose stop vllm-llm"), calls.index(POOL_UP), calls.index(RANK_UP),
+                 calls.index(STACK_UP)]
+        self.assertEqual(order, sorted(order), calls)                      # pool moves before the LLM half starts
+        self.assertTrue(any(c.startswith("compose exec") for c in calls[order[-1]:]))
+        self.assertIn("эмбеддинги и реранкер: теперь с узла", out)
+        self.assertIn("Узел 127.0.0.1, эмбеддинги: отвечает", out)
+
+        before = self.mark()
+        code, out = self.ragspark("llm", DEFAULT, "--yes")
+        self.assertEqual(code, 0, out)
+        self.assertEqual(sysutil.read_env(self.envfile)["COMPOSE_FILE"], "compose.yaml:llm/%s.yaml" % DEFAULT)
+        calls = self.calls(before)
+        order = [calls.index("compose rm --stop --force vllm-llm-rank"), calls.index(POOL_UP), calls.index(LLM_UP),
+                 calls.index(STACK_UP)]
+        self.assertEqual(order, sorted(order), calls)                      # the half's memory first, then the pool
+        self.assertNotIn("compose stop vllm-llm", calls)
+        self.assertIn("эмбеддинги и реранкер: снова на этом узле", out)
+
+    def test_stack_is_refused_while_the_node_does_not_answer(self):
+        for srv in self.servers:
+            srv.shutdown()
+            srv.server_close()
+        before = self.mark()
+        code, out = self.ragspark("llm", STACK, "--yes")
+        self.assertEqual(code, 1, out)
+        self.assertIn("Узел не готов к %s" % STACK, out)
+        self.assertEqual(sysutil.read_env(self.envfile)["COMPOSE_FILE"], "compose.yaml:llm/%s.yaml" % DEFAULT)
+        calls = self.calls(before)
+        self.assertNotIn("compose stop vllm-llm", calls)
+        self.assertFalse([c for c in calls if "DeepSeek" in c], calls)       # nothing downloaded either
+
+    def test_back_to_single_when_the_pair_does_not_start(self):
+        self.set_fake(up_fails_for=STACK)
+        code, out = self.ragspark("llm", STACK, "--yes")
+        self.assertEqual(code, 1, out)
+        self.assertEqual(sysutil.read_env(self.envfile)["COMPOSE_FILE"], "compose.yaml:llm/%s.yaml" % DEFAULT)
+        m = json.load(open(os.path.join(self.inst, "manifest.json")))
+        self.assertEqual(m["config"]["llm"], DEFAULT)
+        self.assertIn("%s снова работает" % DEFAULT, out)

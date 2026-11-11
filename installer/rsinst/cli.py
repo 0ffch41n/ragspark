@@ -3,7 +3,7 @@ import argparse
 import os
 import sys
 
-from . import ui
+from . import paths, ui
 from .manifest import Manifest
 
 COMMANDS = ["install", "check", "status", "start", "stop", "restart", "logs", "llm", "acceptance", "uninstall", "prestart",
@@ -36,6 +36,10 @@ def build_parser():
     i.add_argument("--http-bind", help="address for the web port (default 0.0.0.0)")
     i.add_argument("--models-dir", help="model weights directory (default /srv/ragspark/hf-cache)")
     i.add_argument("--llm", help="LLM file in compose/llm/ without .yaml; `--llm list` shows the models and exits")
+    i.add_argument("--role", choices=["head", "node"],
+                   help="head (default): RAGFlow and the models; node: the second unit of stack mode")
+    i.add_argument("--head-ip", help="stack mode: the head's address on the cable (default 192.168.100.10)")
+    i.add_argument("--node-ip", help="stack mode: the node's address on the cable (default 192.168.100.11)")
     i.add_argument("--skip-acceptance", action="store_true", help="do not run the acceptance test")
     i.add_argument("--no-network", action="store_true", help="skip the registry latency check")
     i.add_argument("--force", action="store_true", help="continue despite failed checks")
@@ -72,6 +76,8 @@ def main(argv=None):
         parser.print_help()
         return 2
     manifest = Manifest.load()
+    if manifest is not None:
+        paths.set_role(manifest.config.get("role", "head"))
     lang = args.lang or (manifest.config.get("lang") if manifest else None) or ui.detect_lang()
     ui.set_lang(lang)
     ui.set_yes(args.yes)

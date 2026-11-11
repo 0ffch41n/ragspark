@@ -74,6 +74,8 @@ def uninstall(args):
         ui.say(ui.t("cancelled"))
         return 1
 
+    if data.get("timer"):
+        run(["systemctl", "disable", "--now", data["timer"]])
     if data.get("unit"):
         code, out = run(["systemctl", "disable", "--now", data["unit"]])
         if code == 0:
