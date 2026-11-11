@@ -1,0 +1,18 @@
+# LLM on the node: the second half (rank 1) of DeepSeek-V4-Flash-Vision-Exp, headless.
+# Selected in the node's .env:  COMPOSE_FILE=compose.yaml:llm/deepseek-v4-flash-vision.yaml
+# It joins the head's half (RAGSPARK_HEAD_IP:29501) and waits there until the head starts;
+# `ragspark watch` restarts it when the head's half went away. Flags and image: compose/ranks/.
+
+services:
+  vllm-llm-rank:
+    extends:
+      file: ../ranks/deepseek-v4-flash-vision.yaml   # relative to the project directory (compose/node/)
+      service: rank
+    command: ["--node-rank", "1", "--headless"]
+    environment:
+      VLLM_HOST_IP: ${RAGSPARK_NODE_IP:-192.168.100.11}
+    healthcheck:
+      disable: true                   # headless: no HTTP endpoint
+
+volumes:
+  vllm-rank-cache:

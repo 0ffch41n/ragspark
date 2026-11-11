@@ -1,0 +1,33 @@
+# LLM: DeepSeek-V4-Flash-Vision-Exp across both DGX Sparks (catalog id deepseek-v4-flash-vision).
+# Stack mode only. Selected in .env:
+#   COMPOSE_FILE=compose.yaml:stack.yaml:llm/deepseek-v4-flash-vision.yaml
+#
+# This file is the head's half (rank 0): the OpenAI API on the cable address, behind the vllm-llm
+# relay of stack.yaml. The node runs rank 1 (compose/node/llm/). Flags and image: ranks/.
+
+services:
+  vllm-llm-rank:
+    extends:
+      file: ranks/deepseek-v4-flash-vision.yaml      # relative to the project directory (compose/)
+      service: rank
+    command: ["--node-rank", "0", "--host", "${RAGSPARK_HEAD_IP:-192.168.100.10}", "--port", "8000"]
+    environment:
+      VLLM_HOST_IP: ${RAGSPARK_HEAD_IP:-192.168.100.10}
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import sys, urllib.request; urllib.request.urlopen(sys.argv[1], timeout=5)",
+             "http://${RAGSPARK_HEAD_IP:-192.168.100.10}:8000/health"]
+      interval: 20s
+      timeout: 10s
+      retries: 3
+      start_period: 30m               # ~8 min when both halves start together
+
+  # What tools/ragflow_models.py registers in RAGFlow for this LLM.
+  ragflow:
+    environment:
+      RAGSPARK_LLM_NAME: deepseek-v4-flash
+      RAGSPARK_LLM_CONTEXT: "65536"
+      RAGSPARK_LLM_TOOLS: "1"
+      RAGSPARK_LLM_VISION: "1"          # vision tower in the checkpoint: parses scans (1536 tokens a page)
+
+volumes:
+  vllm-rank-cache:

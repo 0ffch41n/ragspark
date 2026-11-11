@@ -5,6 +5,13 @@ that both texts are filled in and that their {placeholders} match.
 """
 
 MESSAGES = {
+    # ------------------------------------------------------------- watch (stack mode)
+    "watch_restarted": ("restarted {name}: {reason}", "перезапущен {name}: {reason}"),
+    "watch_head_lost": ("the head's half of the LLM has not answered for {s} s, this half waits for it in vain",
+                        "половина LLM на головном узле не отвечает {s} с, эта половина ждёт её впустую"),
+    "watch_no_answer": ("{n} test requests in a row got no answer although /health reported ready",
+                        "{n} пробных запроса подряд без ответа, хотя /health сообщал о готовности"),
+
     # ------------------------------------------------------------- general
     "need_root": ("Run as root: {cmd}", "Запустите от root: {cmd}"),
     "yes_no_default_yes": ("[Y/n]", "[Д/н]"),

@@ -6,7 +6,8 @@ import sys
 from . import ui
 from .manifest import Manifest
 
-COMMANDS = ["install", "check", "status", "start", "stop", "restart", "logs", "llm", "acceptance", "uninstall", "prestart"]
+COMMANDS = ["install", "check", "status", "start", "stop", "restart", "logs", "llm", "acceptance", "uninstall", "prestart",
+            "watch"]
 
 
 def _common(suppress):
@@ -57,6 +58,7 @@ def build_parser():
     ll.add_argument("name", nargs="?", help="LLM file in compose/llm/ without .yaml, or its number in the list")
     sub.add_parser("acceptance", parents=[common], help="run the acceptance test again")
     sub.add_parser("prestart", parents=[common])          # used by the systemd unit
+    sub.add_parser("watch", parents=[common])             # stack mode: used by the systemd timer
     u = sub.add_parser("uninstall", parents=[common], help="remove RAGSpark and all its data")
     u.add_argument("--keep-images", action="store_true", help="keep the Docker images the installer pulled")
     u.add_argument("--keep-models", action="store_true", help="keep the model weights the installer downloaded")
@@ -84,12 +86,13 @@ def main(argv=None):
         choice = ui.ask("Language / Язык (ru, en)", lang)
         ui.set_lang(choice if choice in ("ru", "en") else lang)
 
-    from . import control, install, switch, uninstall
+    from . import control, install, switch, uninstall, watch
     handlers = {
         "install": install.install, "uninstall": uninstall.uninstall,
         "check": control.check, "status": control.status, "start": control.start,
         "stop": control.stop, "restart": control.restart, "logs": control.logs,
         "acceptance": control.acceptance, "prestart": control.prestart, "llm": switch.llm,
+        "watch": watch.watch,
     }
     try:
         return handlers[args.command](args)

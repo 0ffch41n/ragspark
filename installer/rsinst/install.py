@@ -328,10 +328,11 @@ def step_gpu(cfg):
 
 
 def model_repos(cfg):
-    """(repository, revision) of every vLLM service; revision is "" when not pinned."""
+    """(repository, revision) of every vLLM service; revision is "" when not pinned. The
+    `vllm serve` line may start in the entrypoint (stack mode: the shared flags of both halves)."""
     repos = []
     for name, svc in sorted((cfg.get("services") or {}).items()):
-        cmd = svc.get("command") or []
+        cmd = (svc.get("entrypoint") or []) + (svc.get("command") or [])
         if name.startswith("vllm-") and "serve" in cmd and cmd.index("serve") + 1 < len(cmd):
             rev = cmd[cmd.index("--revision") + 1] if "--revision" in cmd[:-1] else ""
             repos.append((cmd[cmd.index("serve") + 1], rev))

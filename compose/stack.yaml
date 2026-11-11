@@ -1,0 +1,60 @@
+# RAGSpark - stack mode: an LLM that runs across both DGX Spark units (docs/COMPOSE.md, Stack mode).
+#
+# Added to compose.yaml for an LLM whose catalog entry has modes [stack]; .env then reads
+#   COMPOSE_FILE=compose.yaml:stack.yaml:llm/<id>.yaml
+#
+# This unit, the head, keeps RAGFlow and its databases and runs the first half of the LLM
+# (llm/<id>.yaml, service vllm-llm-rank, on the host network). The second unit, the node
+# (compose/node/), runs the other half, the embedding model and the reranker. Both reach each
+# other over the direct QSFP cable only: RAGSPARK_HEAD_IP and RAGSPARK_NODE_IP in .env.
+#
+# RAGFlow keeps calling vllm-llm, vllm-embed and vllm-rerank on port 8000: here these names are
+# relays (relay.py), so its model settings stay the same in single and stack mode. A relay is
+# healthy when the model behind it answers /health.
+#
+# RAGFlow does not wait for the models here: when the node is down, the web interface and the
+# documents stay available and only answers fail (in single mode RAGFlow waits for all three).
+
+x-relay: &relay
+  # Any image with Python 3 runs relay.py; this one is on the head anyway (the LLM half).
+  image: ghcr.io/timothystewart6/vllm-gb10@sha256:39fc41b2e0a91d0c75fe03cbf00a715524bd8fab23114d37710a26e1de034333
+  entrypoint: ["python3", "-I", "/relay.py"]
+  user: "65534:65534"                 # nobody: a relay needs no privileges
+  restart: always
+  networks: !override [default, backend]   # backend: RAGFlow calls it by name; default: the route to the cable
+  volumes: !override
+    - ./relay.py:/relay.py:ro
+  deploy: !reset {}                   # no GPU
+  depends_on: !reset {}
+
+services:
+  vllm-embed:
+    <<: *relay
+    command: ["8000", "${RAGSPARK_NODE_IP:-192.168.100.11}", "8001"]
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import sys, urllib.request; urllib.request.urlopen(sys.argv[1], timeout=5)",
+             "http://${RAGSPARK_NODE_IP:-192.168.100.11}:8001/health"]
+
+  vllm-rerank:
+    <<: *relay
+    command: ["8000", "${RAGSPARK_NODE_IP:-192.168.100.11}", "8002"]
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import sys, urllib.request; urllib.request.urlopen(sys.argv[1], timeout=5)",
+             "http://${RAGSPARK_NODE_IP:-192.168.100.11}:8002/health"]
+
+  vllm-llm:
+    <<: *relay
+    command: ["8000", "${RAGSPARK_HEAD_IP:-192.168.100.10}", "8000"]
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import sys, urllib.request; urllib.request.urlopen(sys.argv[1], timeout=5)",
+             "http://${RAGSPARK_HEAD_IP:-192.168.100.10}:8000/health"]
+      start_period: 30m               # both halves load (~10 min) and wait for each other
+
+  ragflow:
+    depends_on:
+      vllm-embed:
+        condition: service_started
+      vllm-rerank:
+        condition: service_started
+      vllm-llm:
+        condition: service_started

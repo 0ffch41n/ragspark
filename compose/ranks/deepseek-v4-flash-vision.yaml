@@ -1,0 +1,142 @@
+# DeepSeek-V4-Flash-Vision-Exp: one half of a tensor-parallel pair (catalog id deepseek-v4-flash-vision).
+#
+# Not used on its own. Both units extend this service - the head in llm/deepseek-v4-flash-vision.yaml
+# (rank 0, the OpenAI API on its cable address), the node in node/llm/deepseek-v4-flash-vision.yaml
+# (rank 1, headless) - so both halves always run the same image, weights and flags. Every flag
+# except the rank is in `entrypoint`; each unit adds its own in `command`.
+#
+# Measured in the stage 5 window, docs/VALIDATION.md section 17.
+
+services:
+  rank:
+    # Community build of vLLM 0.31.0 for GB10 (D20): no official vLLM release runs DeepSeek V4 on
+    # sm_121 yet. Pinned by digest; it was qualified for this model by its maintainer.
+    image: ghcr.io/timothystewart6/vllm-gb10@sha256:39fc41b2e0a91d0c75fe03cbf00a715524bd8fab23114d37710a26e1de034333
+    # vLLM exits with code 0 when it loses the other half, so on-failure would leave it stopped.
+    restart: always
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "5"
+    network_mode: host                # NCCL over RoCE on the cable; the API binds to the cable address only
+    shm_size: 8gb                     # vLLM's own processes; no host IPC namespace
+    devices:
+      - /dev/infiniband:/dev/infiniband
+    ulimits:
+      memlock: -1                     # RDMA registers memory
+      stack: 67108864
+    environment:
+      HF_HUB_OFFLINE: "1"
+      TRANSFORMERS_OFFLINE: "1"
+      HF_HUB_DISABLE_TELEMETRY: "1"
+      VLLM_NO_USAGE_STATS: "1"
+      DO_NOT_TRACK: "1"
+      TZ: ${RAGSPARK_TZ:-Etc/UTC}
+      # The cable. NCCL finds both of its halves and the IPv4 RoCE v2 address by itself: do not
+      # set NCCL_IB_HCA (one half halves the bandwidth) or NCCL_IB_GID_INDEX (3 is IPv6 here).
+      NCCL_SOCKET_IFNAME: ${RAGSPARK_CABLE_IF:-enp1s0f1np1}
+      GLOO_SOCKET_IFNAME: ${RAGSPARK_CABLE_IF:-enp1s0f1np1}
+      TP_SOCKET_IFNAME: ${RAGSPARK_CABLE_IF:-enp1s0f1np1}
+      # Default 300: how long a half waits for a lost partner before it exits.
+      VLLM_EXECUTE_MODEL_TIMEOUT_SECONDS: "60"
+      # The model's recipe for GB10 (vllm-gb10 example deepseek-v4-flash-0731).
+      OMP_NUM_THREADS: "1"
+      PYTORCH_CUDA_ALLOC_CONF: expandable_segments:True
+      VLLM_USE_V2_MODEL_RUNNER: "1"
+      VLLM_MULTI_STREAM_GEMM_TOKEN_THRESHOLD: "0"
+      VLLM_USE_BREAKABLE_CUDAGRAPH: "1"
+      VLLM_B12X_MOE_FP4_FORCE_A16: "1"
+      VLLM_SPARSE_INDEXER_MAX_LOGITS_MB: "128"
+      DG_JIT_USE_NVRTC: "0"
+      TILELANG_CLEANUP_TEMP_FILES: "1"
+      # Kernels compiled on the first start, kept for the next ones (~3 min less).
+      DG_JIT_CACHE_DIR: /root/.cache/rank/deepgemm
+      FLASHINFER_WORKSPACE_BASE: /root/.cache/rank/flashinfer
+      TILELANG_CACHE_DIR: /root/.cache/rank/tilelang
+      TORCH_EXTENSIONS_DIR: /root/.cache/rank/torch-extensions
+      TORCHINDUCTOR_CACHE_DIR: /root/.cache/rank/torchinductor
+      TRITON_CACHE_DIR: /root/.cache/rank/triton
+      VLLM_CACHE_ROOT: /root/.cache/rank/vllm
+    volumes:
+      - ${RAGSPARK_HF_CACHE:-/srv/ragspark/hf-cache}:/root/.cache/huggingface:ro
+      - vllm-rank-cache:/root/.cache/rank
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    entrypoint:
+      - vllm
+      - serve
+      - deepseek-ai/DeepSeek-V4-Flash-Vision-Exp
+      - --revision                      # the validated snapshot; the installer downloads this one
+      - 6821d6ad3681a4b137b066b76094fa82ebd0a380
+      - --served-model-name
+      - deepseek-v4-flash
+      - --tensor-parallel-size
+      - "2"
+      - --nnodes
+      - "2"
+      - --master-addr
+      - ${RAGSPARK_HEAD_IP:-192.168.100.10}
+      - --master-port
+      - "29501"                         # torch's TCPStore listens on every address (accepted, D12.3)
+      # Weights straight to GPU memory: 7 s instead of 150 s per 22 GB, and none of the 168 GB stays
+      # in the page cache, which otherwise pushed RAGFlow's databases into swap (VALIDATION 17).
+      - --load-format
+      - instanttensor
+      # Memory: the KV cache is fixed, not a share. 12 GiB holds 233k tokens (3.5 requests of 64k);
+      # the start-up check still wants 0.80 of the memory free.
+      - --gpu-memory-utilization
+      - "0.80"
+      - --kv-cache-memory-bytes
+      - "12884901888"
+      - --kv-cache-dtype
+      - fp8
+      - --block-size
+      - "256"
+      - --max-model-len
+      - "65536"
+      - --max-num-seqs
+      - "8"
+      - --max-num-batched-tokens
+      - "4096"                          # its sliding-window part of the KV cache grows with this
+      - --linear-backend
+      - auto
+      - --moe-backend
+      - b12x
+      - --sparse-indexer-topk-backend
+      - auto
+      - --tokenizer-mode
+      - deepseek_v4                     # no Jinja chat template in the checkpoint
+      - --enable-auto-tool-choice
+      - --tool-call-parser
+      - deepseek_v4
+      - --reasoning-parser
+      - deepseek_v4
+      - --default-chat-template-kwargs
+      - '{"thinking": false}'           # RAGFlow does not send it; the answer lands in content
+      # Defaults for requests that do not set their own; max_new_tokens bounds a looping answer
+      # (RAGFlow strips max_tokens). Scans: RAGFlow sends temperature 0 itself (D14).
+      - --override-generation-config
+      - '{"temperature": 0.7, "top_p": 0.95, "max_new_tokens": 8192}'
+      - --compilation-config
+      - '{"cudagraph_mode": "FULL_AND_PIECEWISE"}'
+      - --max-cudagraph-capture-size
+      - "32"
+      - --speculative-config
+      - '{"method": "dspark", "num_speculative_tokens": 3, "draft_sample_method": "greedy"}'
+      - --enable-prefix-caching
+      - --async-scheduling
+      - --limit-mm-per-prompt
+      - '{"image": 2}'
+      # 384 image tokens by default: a dense A4 page then loses ~4.5% of its words; 1536 keeps 98.9%.
+      - --hf-overrides
+      - '{"vision_max_n_token": 1536}'
+      - --no-enable-flashinfer-autotune  # its autotune hangs a multi-node start without GPUDirect RDMA
+
+volumes:
+  vllm-rank-cache:

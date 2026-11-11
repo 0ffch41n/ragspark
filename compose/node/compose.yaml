@@ -1,0 +1,93 @@
+# RAGSpark - the node: the second DGX Spark of stack mode (docs/COMPOSE.md, Stack mode).
+#
+# The head (the unit with RAGFlow) reaches the services here over the direct QSFP cable only:
+#   vllm-embed      RAGSPARK_NODE_IP:8001   the embedding model: image, weights, flags as in ../compose.yaml
+#   vllm-rerank     RAGSPARK_NODE_IP:8002   the reranker, the same way
+#   vllm-llm-rank   the second half of the stack LLM (llm/<id>.yaml), headless: it joins the head's half
+#
+# .env (written by the installer, role node): COMPOSE_FILE=compose.yaml:llm/<id>.yaml,
+# RAGSPARK_HEAD_IP, RAGSPARK_NODE_IP, RAGSPARK_CABLE_IF, RAGSPARK_HF_CACHE, RAGSPARK_TZ.
+#
+#   sudo docker compose up -d --wait --wait-timeout 2400     (the installer's systemd unit does this)
+
+name: ragspark-node
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "20m"
+    max-file: "5"
+
+x-pooling: &pooling
+  restart: on-failure:5
+  logging: *logging
+  entrypoint: ["/usr/bin/env"]
+  shm_size: 2gb
+  networks: [models]
+  environment:
+    HF_HUB_OFFLINE: "1"
+    HF_HUB_DISABLE_TELEMETRY: "1"
+    VLLM_NO_USAGE_STATS: "1"
+    DO_NOT_TRACK: "1"
+    TZ: ${RAGSPARK_TZ:-Etc/UTC}
+  volumes:
+    - ${RAGSPARK_HF_CACHE:-/srv/ragspark/hf-cache}:/root/.cache/huggingface:ro
+    - vllm-compile-cache:/root/.cache/vllm
+  deploy:
+    resources:
+      reservations:
+        devices:
+          - driver: nvidia
+            count: all
+            capabilities: [gpu]
+  healthcheck:
+    test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=5)"]
+    interval: 20s
+    timeout: 10s
+    retries: 3
+    start_period: 10m
+
+services:
+  # Same image, revision and flags as vllm-embed / vllm-rerank in ../compose.yaml
+  # (tests/test_stack.py keeps them equal).
+  vllm-embed:
+    <<: *pooling
+    image: vllm/vllm-openai:v0.27.1-aarch64@sha256:1c8e60a0841b333c700488cb029d3664807249da0c071e862191b00fe34b228c
+    command:
+      - vllm
+      - serve
+      - deepvk/USER-bge-m3
+      - --revision
+      - 0cc6cfe48e260fb0474c753087a69369e88709ae
+      - --runner
+      - pooling
+      - --gpu-memory-utilization
+      - "0.05"
+    ports:
+      - "${RAGSPARK_NODE_IP:-192.168.100.11}:8001:8000"
+
+  vllm-rerank:
+    <<: *pooling
+    image: vllm/vllm-openai:v0.27.1-aarch64@sha256:1c8e60a0841b333c700488cb029d3664807249da0c071e862191b00fe34b228c
+    command:
+      - vllm
+      - serve
+      - BAAI/bge-reranker-v2-m3
+      - --revision
+      - 953dc6f6f85a1b2dbfca4c34a2796e7dde08d41e
+      - --runner
+      - pooling
+      - --gpu-memory-utilization
+      - "0.03"
+    ports:
+      - "${RAGSPARK_NODE_IP:-192.168.100.11}:8002:8000"
+    depends_on:
+      vllm-embed:
+        condition: service_healthy
+
+volumes:
+  vllm-compile-cache:
+
+networks:
+  models:                     # an ordinary bridge: ports can only be published from one
+    name: ragspark-node

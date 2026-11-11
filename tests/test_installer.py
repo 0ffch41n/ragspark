@@ -297,10 +297,12 @@ class CatalogMenu(unittest.TestCase):
         cat = self.catalog.load()
         self.assertIsNotNone(cat)
         files = install.llm_choices()
-        self.assertEqual(self.catalog.offered(cat, files), files)           # all single-mode today
+        single = self.catalog.offered(cat, files)
+        self.assertEqual(single, ["qwen-3.8-27b-nvfp4", "qwen-3.6-35b-a3b-nvfp4"])
+        self.assertEqual(self.catalog.offered(cat, files, "stack"), ["deepseek-v4-flash-vision"])  # tests/test_stack.py
         self.assertEqual(self.catalog.not_ready(cat, files),
                          ["gemma-4-26b-a4b", "nemotron-3-super-120b-a12b-nvfp4", "gpt-oss-120b"])
-        for name in files:
+        for name in single:
             with open(os.path.join(ROOT, "compose", "llm", name + ".yaml"), encoding="utf-8") as f:
                 svc = yaml.safe_load(f)["services"]
             cmd, env = svc["vllm-llm"]["command"], svc["ragflow"]["environment"]
@@ -335,7 +337,8 @@ class LlmList(unittest.TestCase):
                             "install", "--llm", "list", "--lang", "en"],
                            env=env, capture_output=True, text=True, stdin=subprocess.DEVNULL)
         self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
-        for name in install.llm_choices():
+        from rsinst import catalog
+        for name in catalog.offered(catalog.load(), install.llm_choices()):   # single mode: what install offers
             self.assertIn(name, p.stdout)
         self.assertIn("sudo ./install.sh --llm <name>", p.stdout)
         self.assertEqual(os.listdir(tmp), [])
