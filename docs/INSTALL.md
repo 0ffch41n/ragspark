@@ -360,10 +360,9 @@ checks the cable and the node's models; then the old LLM stops, the relays take
 over the embedding model and the reranker (search pauses for about a minute)
 and both halves load. The chat answers again after about 10 minutes the first
 time; the command finishes with the model registration and the acceptance
-test. Do not sign in to the web interface as the superuser while it runs:
-RAGFlow keeps one session per user, and the command's registration fails with
-HTTP 401. If that happens, run `sudo ragspark llm deepseek-v4-flash-vision`
-again — it only finishes the registration — and then `sudo ragspark acceptance`.
+test. RAGFlow keeps one session per user: if you sign in to the web interface
+as the superuser meanwhile, the command logs in again by itself, and the web
+interface asks you to sign in once more.
 
 **Back to one unit** — for maintenance of the node, or when it is down for
 longer:

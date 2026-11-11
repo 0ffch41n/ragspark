@@ -11,8 +11,10 @@ import mock_ragflow  # noqa: E402
 
 
 class Acceptance(unittest.TestCase):
-    def run_tool(self, mode, *extra):
+    def run_tool(self, mode, *extra, prepare=None):
         srv, state, url = mock_ragflow.serve(mode)
+        if prepare:
+            prepare(state)
         try:
             env = dict(os.environ, RAGFLOW_API=url, ADMIN_DEFAULT_PASSWORD="secret",
                        DEFAULT_SUPERUSER_EMAIL="admin@ragspark.local",
@@ -35,6 +37,18 @@ class Acceptance(unittest.TestCase):
         self.assertEqual(chat["vector_similarity_weight"], 0.7)
         self.assertEqual(chat["similarity_threshold"], 0.1)
         self.assertIn("{knowledge}", chat["prompt_config"]["system"])
+
+    def test_another_login_during_the_test(self):
+        """A superuser login elsewhere while the test runs ends its RAGFlow session; it logs in again.
+        After 3 requests the next one is the upload, so the multipart body is sent twice."""
+        for at in (3, 10):
+            with self.subTest(at=at):
+                code, out, state = self.run_tool("good", prepare=lambda s: setattr(s, "end_session_after", at))
+                self.assertEqual(code, 0, out)
+                self.assertIn("another login ended the RAGFlow session", out)
+                self.assertIn("acceptance passed", out)
+                self.assertEqual(state.logins, 2)
+                self.assertEqual(len(state.docs), 1)
 
     def test_rerun_replaces_example(self):
         srv, state, url = mock_ragflow.serve("good")

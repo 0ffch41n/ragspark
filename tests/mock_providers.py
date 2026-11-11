@@ -26,6 +26,10 @@ class State:
         self.defaults = {}                      # model type -> model id
         self.chats, self.datasets, self.docs = {}, {}, {}
         self.writes = []                        # every request that changes something
+        # RAGFlow keeps one session per user: every login issues a new token and ends the previous one.
+        self.token, self.logins, self.requests = None, 0, 0
+        self.end_session_after = None           # authorized requests after which another login ends ours
+        self.end_session_always = False         # ... or before every request
 
     def model(self, instance, name):
         for m in self.models.values():
@@ -73,9 +77,9 @@ def make_handler(state):
         def log_message(self, *a):
             pass
 
-        def send(self, obj, headers=None):
+        def send(self, obj, headers=None, status=200):
             body = json.dumps(obj, ensure_ascii=False).encode()
-            self.send_response(200)
+            self.send_response(status)
             for k, v in (headers or {}).items():
                 self.send_header(k, v)
             self.send_header("Content-Type", "application/json")
@@ -100,9 +104,16 @@ def make_handler(state):
                 doc = next((d for docs in state.docs.values() for d in docs if d["id"] == doc_id), None)
                 return self.send(doc)
             if method == "POST" and p == "/api/v1/auth/login":
-                return self.ok({"email": b.get("email")}, {"Authorization": TOKEN})
-            if self.headers.get("Authorization") != TOKEN:
-                return self.send({"code": 401, "message": "unauthorized"})
+                state.logins += 1
+                state.token = "%s-%d" % (TOKEN, state.logins)
+                return self.ok({"email": b.get("email")}, {"Authorization": state.token})
+            if state.end_session_always or (state.end_session_after is not None
+                                            and state.requests >= state.end_session_after):
+                state.end_session_after = None
+                state.token = "tok-elsewhere"         # the same user logged in somewhere else
+            if self.headers.get("Authorization") != state.token:
+                return self.send({"code": 401, "message": "<Unauthorized '401: Unauthorized'>"}, status=401)
+            state.requests += 1
             if method != "GET" and not p.endswith("/connection"):
                 state.writes.append("%s %s" % (method, p))
             page, size = int(q.get("page", 1)), int(q.get("page_size", 30))

@@ -60,7 +60,8 @@ if os.environ.get("RAGSPARK_LLM_VISION", "0") == "1":
 API = os.environ.get("RAGFLOW_API", "http://127.0.0.1:9380").rstrip("/")
 _jar = http.cookiejar.CookieJar()
 _opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(_jar))
-_auth = {"value": ""}
+LOGIN_PATH = "/api/v1/auth/login"
+_auth = {"value": "", "again": None}
 
 
 def encrypt_password(password):
@@ -76,7 +77,22 @@ def encrypt_password(password):
         return base64.b64encode(PKCS1_v1_5.new(key).encrypt(data.encode())).decode()
 
 
+def unauthorized(code, d):
+    return code == 401 or (isinstance(d, dict) and d.get("code") == 401)
+
+
 def call(method, path, body=None):
+    code, payload, headers = _send(method, path, body)
+    if unauthorized(code, payload) and _auth["again"] and path != LOGIN_PATH:
+        # RAGFlow keeps one session per user: a login elsewhere - the web interface, another tool -
+        # ends this one. Log in again and repeat the request, once: a 401 changed nothing.
+        print("[WARN] another login ended the RAGFlow session; logging in again")
+        _auth["again"]()
+        code, payload, headers = _send(method, path, body)
+    return code, payload, headers
+
+
+def _send(method, path, body):
     data = json.dumps(body).encode() if body is not None else None
     req = urllib.request.Request(API + path, data=data, method=method)
     req.add_header("Content-Type", "application/json")
@@ -124,12 +140,12 @@ def admin_email():
 
 
 def login(email, password):
-    code, d, headers = call("POST", "/api/v1/auth/login",
-                            {"email": email, "password": encrypt_password(password)})
+    code, d, headers = call("POST", LOGIN_PATH, {"email": email, "password": encrypt_password(password)})
     token = headers.get("Authorization", "") if headers else ""
     if not ok(code, d) or not token:
         sys.exit("[FAIL] login as %s: %s" % (email, err(code, d)))
     _auth["value"] = token
+    _auth["again"] = lambda: login(email, password)
     print("[OK]   login %s" % email)
 
 

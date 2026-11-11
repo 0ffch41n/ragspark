@@ -215,6 +215,13 @@ re-check them before any version bump.
   the container — read only — and sends RAPTOR back unchanged through the API;
   a document whose settings cannot be read is left as it is. Verified on a test
   install, both ways ([VALIDATION.md](VALIDATION.md), section 15).
+- **One session per user:** a login issues a new session token and ends the
+  user's previous one, so a superuser login elsewhere — the web interface,
+  another tool — while the installer or `ragspark llm` works ends the tool's
+  session. `ragflow_models.py` and `acceptance.py` then log in again and repeat
+  the request, once: a request refused with HTTP 401 changed nothing. The web
+  interface's session ends in turn and asks to sign in again. Found during the
+  stack switch ([VALIDATION.md](VALIDATION.md), section 18).
 
 ## D9. Model catalog
 
@@ -667,12 +674,6 @@ re-check them before any version bump.
   available: the kernel moves idle database pages out instead of dropping the
   page cache. Nothing failed (VALIDATION, section 18); a lower `vm.swappiness`
   is to be tested.
-- **A second login during a change of the LLM.** RAGFlow keeps one session per
-  user. A superuser login — in the web interface, for example — while
-  `ragspark llm` or the installer registers the models ends the tool's session,
-  and the step fails with HTTP 401 (VALIDATION, section 18).
-  `sudo ragspark llm <the same name>` finishes the registration. The tools
-  should log in again and retry.
 - **Ultra.** The fourth level answers 7/7 on the acceptance sample (`r4`), but
   its own distinguishing feature is still untested: the knowledge-graph tool
   needs a graph built at indexing, and none of RAGSpark's question sets has

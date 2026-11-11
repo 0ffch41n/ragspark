@@ -940,7 +940,8 @@ Release `ae23df2` on both units.
   vision instance stayed on the 27B, and the acceptance test did not run.
   `sudo ragspark llm deepseek-v4-flash-vision` again finished the registration
   in seconds, and `sudo ragspark acceptance` passed in 42 s: two answers with
-  citations in 1 s each, the refusal, Low in 6 s, the assistant chat.
+  citations in 1 s each, the refusal, Low in 6 s, the assistant chat. Since
+  then both tools log in again on HTTP 401 and repeat the request (D8).
 - **Checks:** the smoke test of section 17 passed; sample set Naive 7/7 and
   1/1 (median 2 s), Low 7/7 and 1/1 (6 s).
 - **Speed:** 55.8 tok/s at 1k, 57.9 at 8k, 141.4 aggregate with 4 concurrent

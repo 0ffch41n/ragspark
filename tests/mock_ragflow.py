@@ -26,6 +26,9 @@ class State:
         self.log = []
         self.levels = []            # reasoning level of every chat completion
         self.deleted_sessions = []
+        # RAGFlow keeps one session per user: every login issues a new token and ends the previous one.
+        self.token, self.logins, self.requests = None, 0, 0
+        self.end_session_after = None   # authorized requests after which another login ends ours
 
 
 def make_handler(state):
@@ -51,9 +54,13 @@ def make_handler(state):
             return self.rfile.read(n) if n else b""
 
         def authed(self):
-            if self.headers.get("Authorization") != TOKEN:
-                self.send({"code": 401, "message": "unauthorized"})
+            if state.end_session_after is not None and state.requests >= state.end_session_after:
+                state.end_session_after = None
+                state.token = "tok-elsewhere"         # the same user logged in somewhere else
+            if self.headers.get("Authorization") != state.token:
+                self.send({"code": 401, "message": "<Unauthorized '401: Unauthorized'>"}, 401)
                 return False
+            state.requests += 1
             return True
 
         def route(self, method):
@@ -65,7 +72,9 @@ def make_handler(state):
             if method == "POST" and p == "/api/v1/auth/login":
                 b = json.loads(raw)
                 if b.get("password") == "ENC:secret":
-                    return self.send({"code": 0, "data": {}}, headers={"Authorization": TOKEN})
+                    state.logins += 1
+                    state.token = "%s-%d" % (TOKEN, state.logins)
+                    return self.send({"code": 0, "data": {}}, headers={"Authorization": state.token})
                 return self.send({"code": 109, "message": "Email and password do not match!"})
             if not self.authed():
                 return

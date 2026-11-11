@@ -105,6 +105,42 @@ class RagflowModels(unittest.TestCase):
         self.assertEqual(s.model("ragspark-llm", NEW)["status"], "inactive")
         self.assertEqual(len([m for m in s.models.values() if m["instance"] == "ragspark-llm"]), 2)   # no duplicates
 
+    def test_another_login_during_a_change(self):
+        """RAGFlow keeps one session per user: a superuser login elsewhere - the web interface - while
+        the tool runs ends the tool's session (VALIDATION section 18). It logs in again and finishes."""
+        self.install()
+        self.state.served[LLM_URL] = [NEW]
+        before = self.state.requests
+        self.assertEqual(self.run_tool(NEW)[0], 0)
+        total = self.state.requests - before                    # the requests of an undisturbed change
+        for at in (1, total // 2, total - 1):
+            with self.subTest(at=at):
+                self.setUp()                                    # a fresh RAGFlow
+                self.install()
+                s = self.state
+                s.served[LLM_URL] = [NEW]
+                s.end_session_after = s.requests + at
+                code, out = self.run_tool(NEW)
+                self.assertEqual(code, 0, out)
+                self.assertIn("another login ended the RAGFlow session", out)
+                new_chat = s.model("ragspark-llm", NEW)
+                self.assertEqual(s.defaults["chat"], new_chat["id"])
+                for cid in (self.sample, self.assistant):
+                    self.assertEqual(s.chats[cid]["tenant_llm_id"], new_chat["id"])
+                self.assertEqual(s.docs[self.scans][0]["parser_config"]["layout_recognize"],
+                                 "%s@ragspark-vision@VLLM" % NEW)
+                for inst in ("ragspark-llm", "ragspark-vision"):
+                    self.assertEqual(s.model(inst, OLD)["status"], "inactive", inst)
+
+    def test_a_session_that_keeps_ending_fails_without_looping(self):
+        self.install()
+        s = self.state
+        s.served[LLM_URL] = [NEW]
+        s.end_session_always = True                             # one login again per request, then it gives up
+        code, out = self.run_tool(NEW)
+        self.assertNotEqual(code, 0, out)
+        self.assertIn("HTTP 401", out)
+
     def test_without_ragflow_services_documents_keep_their_settings(self):
         """The API hides a document's RAPTOR settings; if they cannot be read, the document is not touched."""
         self.install()

@@ -81,6 +81,7 @@ CJK = re.compile(r"[぀-ヿ㐀-䶿一-鿿가-힯]")
 
 _jar = http.cookiejar.CookieJar()
 _opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(_jar))
+LOGIN_PATH = "/api/v1/auth/login"
 _auth = {"value": ""}
 problems = []
 
@@ -98,7 +99,22 @@ def encrypt_password(password):
         return base64.b64encode(PKCS1_v1_5.new(key).encrypt(data.encode())).decode()
 
 
+def unauthorized(code, d):
+    return code == 401 or (isinstance(d, dict) and d.get("code") == 401)
+
+
 def request(method, path, data=None, content_type="application/json", timeout=120):
+    code, payload, headers = _send(method, path, data, content_type, timeout)
+    if unauthorized(code, payload) and _auth["value"] and path != LOGIN_PATH:
+        # RAGFlow keeps one session per user: a login elsewhere - the web interface, another tool -
+        # ends this one. Log in again and repeat the request, once: a 401 changed nothing.
+        report("WARN", "another login ended the RAGFlow session; logging in again")
+        login()
+        code, payload, headers = _send(method, path, data, content_type, timeout)
+    return code, payload, headers
+
+
+def _send(method, path, data, content_type, timeout):
     req = urllib.request.Request(API + path, data=data, method=method)
     if data is not None:
         req.add_header("Content-Type", content_type)
@@ -165,7 +181,7 @@ def login():
     if not password:
         fatal("ADMIN_DEFAULT_PASSWORD is not set in this environment")
     email = admin_email()
-    code, d, headers = call("POST", "/api/v1/auth/login", {"email": email, "password": encrypt_password(password)})
+    code, d, headers = call("POST", LOGIN_PATH, {"email": email, "password": encrypt_password(password)})
     token = headers.get("Authorization", "") if headers else ""
     if not ok(code, d) or not token:
         fatal("login as %s: %s" % (email, err(code, d)))
