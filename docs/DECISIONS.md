@@ -155,7 +155,9 @@ re-check them before any version bump.
     `ragspark check --gpu-reload` tests the machine, and
     [INSTALL.md](INSTALL.md) describes the switch to `cgroupfs` (D18). On
     DGX OS 7.5 with Docker 29.6.2 the test passed with the `systemd` driver
-    (2026-10-09), so it stays.
+    (2026-10-09), so it stays;
+  - one exception: the LLM of stack mode, DeepSeek V4, runs on a community
+    image, because no official one runs it on GB10 yet (D20).
 
 ## D7. Embeddings and reranker
 
@@ -235,16 +237,57 @@ re-check them before any version bump.
 - **Rule:** `validated: true` only after the acceptance test passes on real
   hardware. Each model's license is shown before download.
 
-## D10. Stack mode — stage 5
+## D10. Stack mode — two units, one large LLM (stage 5)
 
-- **What:** two DGX Spark units linked by a direct QSFP cable.
-- **Tier 1:** the second unit runs only the LLM, without tensor parallelism;
-  RAGFlow, embeddings and reranker stay on the first.
-- **Tier 2:** tensor parallelism across both units (Ray + NCCL) for MoE models in
-  the 200–300B range; NVIDIA documents this topology in its vLLM multi-node
-  playbook.
-- **Why later:** networking, NCCL, Ray and multi-node serving on Docker Hub
-  images (instead of NGC) each need separate validation.
+- **What:** two DGX Spark units linked by a direct QSFP cable (200 Gb/s, MTU
+  9000, RoCE on both halves of the port). The *head* keeps RAGFlow, its
+  databases and one half of the LLM; the *node* runs the other half, the
+  embedding model and the reranker. Tensor parallelism splits one LLM across
+  both units, so a model twice the size one unit can hold fits.
+- **Why:** a second unit is worth having only for a model one unit cannot
+  run. Two separate LLMs, one on each unit, were considered and rejected: they
+  give no better answers than one.
+- **Model:** DeepSeek-V4-Flash-Vision-Exp — 284B MoE with 13B active, FP8 with
+  FP4 experts, a vision tower and a built-in draft model, MIT license. It fits
+  once the embedding model and the reranker move to the node: 79.5 GiB of
+  weights and 12 GiB of KV cache on each unit. Twice the speed of the default
+  LLM, the same answers on RAGSpark's question sets, scans read as well; its
+  knowledge ends around May 2025 ([VALIDATION.md](VALIDATION.md), section 17).
+  Weighed and set aside: MiniMax M2.5 and Qwen3-235B (no faster on two units
+  than the 27B on one), GLM-5.3-Flash (leaves no memory for RAGFlow),
+  MiMo-V2.6-Flash (slower on prose, needs many vLLM patches).
+- **How:**
+  - vLLM's own multi-node launch (`--nnodes 2`, the node's half
+    `--headless`) instead of Ray, whose object store takes memory neither unit
+    has to spare. NCCL finds both halves of the port and the IPv4 RoCE address
+    on the cable by itself;
+  - both halves extend one service definition in `compose/ranks/`, so they
+    always run the same image, weights and flags;
+  - RAGFlow keeps calling `vllm-llm`, `vllm-embed` and `vllm-rerank`; in stack
+    mode these names on the head are relays to the cable, so RAGFlow's model
+    settings are the same in both modes ([COMPOSE.md](COMPOSE.md), *Stack
+    mode*);
+  - the node is installed with `install.sh --role node`; `sudo ragspark llm`
+    on the head switches a running installation between the modes and moves
+    the embedding model and the reranker with it ([INSTALL.md](INSTALL.md),
+    *Stack mode*);
+  - vLLM does not mend a broken pair by itself. Docker's restart policy
+    `always` and `ragspark watch`, a timer on both units every 30 s, restart
+    the halves. The same command has a memory fuse: it stops a unit's half
+    when less than 4 GiB of memory stays available, before the unit stops
+    responding;
+  - the weights are read with vLLM's default loader. `instanttensor`, 20 times
+    faster on one unit, ran both units out of memory with two halves
+    (VALIDATION, section 17).
+- **Status:** RAGSpark's own pair runs it in production since 2026-11-11,
+  after a crash of one half and a reboot of both units were recovered without
+  help (VALIDATION, section 18). The catalog's default stays the single-unit
+  LLM (D16): one DGX Spark is the base product.
+- **Limits:** answers need both units. With the node down, the web interface
+  and the stored documents stay available, but answers, search and indexing
+  fail until `sudo ragspark llm <single-mode LLM>` starts everything on the
+  head again — the usual 7–10 minutes of a change of the LLM. A start of the
+  pair takes about 10 minutes the first time and 5–6 minutes afterwards.
 
 ## D11. Languages — English and Russian
 
@@ -258,7 +301,12 @@ re-check them before any version bump.
 3. Only the web entry point faces the network; other ports bind to `127.0.0.1`.
    It is plain HTTP, meant for a trusted network; TLS, where needed, comes from
    a reverse proxy in front of it (accepted after the security review of
-   2026-11-02).
+   2026-11-02). One exception in stack mode: port 29501 on the head, where the
+   two halves of the LLM meet (torch's TCPStore), listens on every address —
+   torch has no option to bind it to one — and is reachable from the local
+   network. Accepted on the same terms on 2026-11-11; [INSTALL.md](INSTALL.md),
+   *Stack mode*, gives a firewall rule that limits it to the cable. Every other
+   port of stack mode binds to the cable address.
 4. An install is complete only when a RAG query returns a cited answer.
 5. Registries are unreliable: offline bundle and image mirror are first-class.
 
@@ -577,6 +625,25 @@ re-check them before any version bump.
   may reply "the documents have no information on …" in its own words instead
   of the chat's "no answer" text, or infer an answer from what it found.
 
+## D20. A community vLLM image for DeepSeek V4 on GB10
+
+- **What:** the LLM of stack mode runs on
+  `ghcr.io/timothystewart6/vllm-gb10:v0.31.0-gb10.1` — vLLM 0.31 built for
+  sm_121a with CUDA 13.2, FlashInfer 0.7.0.post1 and b12x 1.5.0 — pinned by
+  digest in `compose/ranks/`. An exception to D6's official images.
+- **Why:** no official vLLM release runs DeepSeek V4 on GB10 (sm_121) yet.
+  This image is built by CI from pinned inputs, MIT licensed, and its
+  maintainer qualified DeepSeek V4 Flash with tensor parallelism across two
+  GB10 units. The image vLLM's own recipe names for DGX Spark exists only as
+  `:latest`, built from the main branches of vLLM and NCCL, so a pin would
+  not say what it contains.
+- **Conditions:** a new digest means repeating the stage 5 window — speed,
+  chat levels, scans, a crash of one half ([VALIDATION.md](VALIDATION.md),
+  sections 17–18). The models of single mode stay on official images. A
+  community image can disappear: keep a copy in the registry mirror (D13).
+  Replace it with an official image once a vLLM release supports the model on
+  sm_121.
+
 ## Open questions
 
 - **Scanned documents.** Read through vision since `r5` (D14), but measured on a
@@ -595,6 +662,17 @@ re-check them before any version bump.
   `/opt/ragspark` once; a newer release — for example `ragspark llm` on an
   installation made before stage 4 — reaches it only by copying files by hand.
   An update command belongs with stage 6.
+- **Swap while the stack LLM loads.** While the weights are read, the head's
+  16 GiB of swap fill up for about a minute although 30 GiB of memory stay
+  available: the kernel moves idle database pages out instead of dropping the
+  page cache. Nothing failed (VALIDATION, section 18); a lower `vm.swappiness`
+  is to be tested.
+- **A second login during a change of the LLM.** RAGFlow keeps one session per
+  user. A superuser login — in the web interface, for example — while
+  `ragspark llm` or the installer registers the models ends the tool's session,
+  and the step fails with HTTP 401 (VALIDATION, section 18).
+  `sudo ragspark llm <the same name>` finishes the registration. The tools
+  should log in again and retry.
 - **Ultra.** The fourth level answers 7/7 on the acceptance sample (`r4`), but
   its own distinguishing feature is still untested: the knowledge-graph tool
   needs a graph built at indexing, and none of RAGSpark's question sets has

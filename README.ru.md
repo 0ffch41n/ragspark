@@ -5,7 +5,7 @@
 [English version](README.md)
 
 > **Статус: pre-alpha.** Проект создаётся открыто. Установщик работает на
-> DGX Spark (этапы 3–4), но возможны изменения; не ставьте его на машину,
+> DGX Spark (этапы 3–5), но возможны изменения; не ставьте его на машину,
 > данные которой вам нужны. См. план работ ниже.
 
 ## Что это
@@ -20,7 +20,7 @@ RAGSpark превращает DGX Spark в самодостаточную сис
 - **Каталог моделей** — выбор модели под ваше железо; у каждой пометка
   *проверена* или *экспериментальная*
 - **Два режима** — `single` (один DGX Spark) и `stack` (два DGX Spark,
-  соединённые по QSFP, для больших моделей — в планах)
+  соединённые по QSFP, для модели, которая не помещается в один)
 
 ## Требования
 
@@ -30,6 +30,7 @@ RAGSpark превращает DGX Spark в самодостаточную сис
 | ОС | DGX OS 7.x (Ubuntu 24.04 arm64) |
 | Драйвер | NVIDIA 580.x (закреплён — новые ветки дают регрессии на GB10) |
 | Диск | около 150 GB под образы и веса моделей |
+| Режим stack | второй DGX Spark, кабель QSFP, ещё около 190 GB на каждом узле |
 
 ## Установка
 
@@ -42,7 +43,7 @@ sudo ./install.sh
 Установщик проверяет машину, скачивает образы и веса моделей, запускает стек
 и завершает работу приёмочной проверкой. Дальше —
 `sudo ragspark status | start | stop | logs | uninstall`. Руководство:
-[docs/INSTALL.ru.md](docs/INSTALL.ru.md).
+[docs/INSTALL.ru.md](docs/INSTALL.ru.md); два узла — его раздел «Режим stack».
 
 ## Компоненты
 
@@ -53,7 +54,7 @@ sudo ./install.sh
 | MySQL | 8.0 | метаданные RAGFlow |
 | Valkey | 8 | очередь задач RAGFlow |
 | Объектное хранилище (pgsty/silo) | закреплено RAGFlow | поддерживаемый форк MinIO; официальные образы MinIO отозваны |
-| vLLM | своя для каждой модели | официальные образы с Docker Hub, закреплены по хешу |
+| vLLM | своя для каждой модели | официальные образы с Docker Hub, закреплены по хешу; DeepSeek V4 в режиме stack — на сборке сообщества ([D20](docs/DECISIONS.ru.md)) |
 
 Модели по умолчанию: Qwen 3.8 27B NVFP4 с предсказанием нескольких токенов
 (LLM), deepvk/USER-bge-m3 (эмбеддинги), BAAI/bge-reranker-v2-m3 (реранкер); все
@@ -63,6 +64,11 @@ sudo ./install.sh
 установке или позже командой `sudo ragspark llm`. См.
 [catalog/models.yaml](catalog/models.yaml) и
 [docs/VALIDATION.ru.md](docs/VALIDATION.ru.md), раздел 14.
+
+На двух DGX Spark режим `stack` запускает DeepSeek V4 Flash (284B, MoE) сразу
+на обоих: примерно вдвое быстрее модели по умолчанию, на тестовых наборах
+отвечает так же, читает сканы; на собственной паре RAGSpark она в работе
+([docs/VALIDATION.ru.md](docs/VALIDATION.ru.md), разделы 17–18).
 
 **Русские документы:** настройки RAGFlow по умолчанию плохо работают с русским,
 и RAGSpark их меняет — PDF читается по текстовому слою, а поиск опирается на
@@ -86,7 +92,11 @@ sudo ./install.sh
   - [x] 4.2 — меню моделей в установщике ([docs/INSTALL.ru.md](docs/INSTALL.ru.md))
   - [x] 4.3 — смена LLM на работающей установке ([docs/COMPOSE.ru.md](docs/COMPOSE.ru.md), «Смена LLM»)
   - [x] 4.4 — чистая установка со второй LLM ([docs/VALIDATION.ru.md](docs/VALIDATION.ru.md), §15)
-- [ ] **Этап 5** — режим `stack` на двух DGX Spark
+- [x] **Этап 5** — режим `stack` на двух DGX Spark
+  - [x] 5.1 — выбор модели и пробное окно ([docs/VALIDATION.ru.md](docs/VALIDATION.ru.md), §17)
+  - [x] 5.2 — файлы compose, пересылки и присмотр за парой ([docs/COMPOSE.ru.md](docs/COMPOSE.ru.md), «Режим stack»)
+  - [x] 5.3 — роль узла в установщике и переключение режимов ([docs/INSTALL.ru.md](docs/INSTALL.ru.md), «Режим stack»)
+  - [x] 5.4 — работа на двух узлах, сбой и перезагрузка ([docs/VALIDATION.ru.md](docs/VALIDATION.ru.md), §18)
 - [ ] **Этап 6** — бэкапы, мониторинг по желанию, офлайн-пакет
 
 ## Принципы

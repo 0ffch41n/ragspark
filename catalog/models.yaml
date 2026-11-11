@@ -136,12 +136,12 @@ models:
       measured:                         # 2026-11-11, VALIDATION section 17, same harness as the default LLM; its numbers in parentheses
         decode_tok_s_single: 55.4       # DSpark 3, 1k context (27.2); 58.7 at 8k (26.0), first token at 8k 3.0 s (6.4)
         concurrency_8: "all OK, ~204 tok/s aggregate (137)"
-        startup_min: 8                  # first start 8.5, then ~6 with the kernel cache; weights read with the default loader
+        startup_min: 10                 # 9.6 the first time in production (kernel cache built), 5-6 after a crash of one half or a reboot (section 18)
         language_mixing: "0 of 30 probe answers"
         chat_levels: "7/7 at every level, no-answer question 1/1 at every level (the same)"
         scan_4_pages_s: 49              # 1536 tokens: words 99.6%, numbers 100% (27B: the same, 88 s); a dense page 98.9% / 98.1% (99.8% / 100%)
         knowledge_cutoff: "about May 2025, by its own answers"
-      validated: false                  # passed the acceptance test and every chat level in the stage 5 window; true after the stack install (stage 5.4)
+      validated: true                   # acceptance test after the stack install, 2026-11-11 (VALIDATION section 18)
       license: "MIT (model card and LICENSE at the pinned revision, checked 2026-11-10)"
       summary:
         en: Two DGX Sparks - about 2x the default's speed, a 284B model; same answers on the samples.

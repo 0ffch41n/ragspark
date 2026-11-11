@@ -5,7 +5,7 @@
 [Русская версия](README.ru.md)
 
 > **Status: pre-alpha.** The project is being built in public. The installer
-> works on DGX Spark (stages 3–4), but expect changes, and do not use it on a
+> works on DGX Spark (stages 3–5), but expect changes, and do not use it on a
 > machine whose data you need. See the roadmap below.
 
 ## What it is
@@ -20,7 +20,7 @@ citations — with every model running locally and no data leaving the machine.
 - **A model catalog**: pick a model that fits your hardware; each entry is
   marked *validated* or *experimental*
 - **Two modes**: `single` (one DGX Spark) and `stack` (two DGX Spark units
-  linked over QSFP, for larger models — planned)
+  linked over QSFP, for a model neither holds alone)
 
 ## Requirements
 
@@ -30,6 +30,7 @@ citations — with every model running locally and no data leaving the machine.
 | OS | DGX OS 7.x (Ubuntu 24.04 arm64) |
 | Driver | NVIDIA 580.x (pinned — newer branches regress on GB10) |
 | Disk | ~150 GB free for images and model weights |
+| Stack mode | a second DGX Spark, a QSFP cable, ~190 GB more on each unit |
 
 ## Install
 
@@ -42,7 +43,7 @@ sudo ./install.sh
 The installer checks the machine, downloads the images and model weights,
 starts the stack and finishes with an acceptance test. Then
 `sudo ragspark status | start | stop | logs | uninstall`. Guide:
-[docs/INSTALL.md](docs/INSTALL.md).
+[docs/INSTALL.md](docs/INSTALL.md); two units: its section *Stack mode*.
 
 ## Components
 
@@ -53,7 +54,7 @@ starts the stack and finishes with an acceptance test. Then
 | MySQL | 8.0 | RAGFlow metadata |
 | Valkey | 8 | RAGFlow task queue |
 | Object storage (pgsty/silo) | pinned by RAGFlow | maintained MinIO fork; official MinIO images were withdrawn |
-| vLLM | pinned per model | official images from Docker Hub, pinned by digest |
+| vLLM | pinned per model | official images from Docker Hub, pinned by digest; DeepSeek V4 in stack mode on a community build ([D20](docs/DECISIONS.md)) |
 
 Default models: Qwen 3.8 27B NVFP4 with multi-token prediction (LLM),
 deepvk/USER-bge-m3 (embeddings), BAAI/bge-reranker-v2-m3 (reranker); all three
@@ -62,6 +63,11 @@ about 4 times the speed, the same answers at the chat's first levels (Naive,
 Low), weaker on two-part answers above them. Choose it when installing or later
 with `sudo ragspark llm`. See [catalog/models.yaml](catalog/models.yaml) and
 [docs/VALIDATION.md](docs/VALIDATION.md), section 14.
+
+On two DGX Spark units, `stack` mode runs DeepSeek V4 Flash (284B, MoE)
+across both: about twice the default's speed, the same answers on the
+question sets, scans read as well; RAGSpark's own pair runs it in production
+([docs/VALIDATION.md](docs/VALIDATION.md), sections 17–18).
 
 **Russian documents:** RAGFlow's defaults do not work well for Russian, and
 RAGSpark changes them — PDFs are read from their text layer, and retrieval
@@ -85,7 +91,11 @@ LLM's own vision: about 20 s a page with the default LLM, about 7 with Qwen 3.6.
   - [x] 4.2 — the installer's model menu ([docs/INSTALL.md](docs/INSTALL.md))
   - [x] 4.3 — changing the LLM of a running installation ([docs/COMPOSE.md](docs/COMPOSE.md), *Changing the LLM*)
   - [x] 4.4 — clean install with the second LLM ([docs/VALIDATION.md](docs/VALIDATION.md), §15)
-- [ ] **Stage 5** — `stack` mode on two DGX Spark units
+- [x] **Stage 5** — `stack` mode on two DGX Spark units
+  - [x] 5.1 — the model and a trial window ([docs/VALIDATION.md](docs/VALIDATION.md), §17)
+  - [x] 5.2 — compose files, relays and the pair watch ([docs/COMPOSE.md](docs/COMPOSE.md), *Stack mode*)
+  - [x] 5.3 — the installer's node role and switching modes ([docs/INSTALL.md](docs/INSTALL.md), *Stack mode*)
+  - [x] 5.4 — production on two units, a crash and a reboot ([docs/VALIDATION.md](docs/VALIDATION.md), §18)
 - [ ] **Stage 6** — backups, optional monitoring, offline bundle
 
 ## Design principles

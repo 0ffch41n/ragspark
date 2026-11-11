@@ -16,7 +16,8 @@ section 12 is the change of the LLM checkpoint on 2026-10-28 (D16); section
 second LLM, Qwen 3.6 35B-A3B (stage 4, D9, D16); section 15 is stage 4's
 installer menu, a clean install with the second LLM and changing the LLM of a
 running installation (D8, D9); section 16 is the isolation of the models and
-databases (D17).
+databases (D17); sections 17 and 18 are stage 5, stack mode on two units:
+the trial window and the production install (D10, D20).
 Numbers can be reproduced with the scripts in [tools/](../tools/).
 
 ## 1. LLM serving — Qwen 3.8 27B NVFP4
@@ -837,3 +838,129 @@ removed afterwards. Image `r7`, vLLM 0.27.1.
 - **Qwen 3.6 without outbound access:** started with the SM12x MoE kernels
   (`FLASHINFER_B12X`) in 412 s, nothing downloaded; KV cache 19.1 GiB = 1.29 M
   tokens.
+
+## 17. Stack mode — DeepSeek V4 Flash on two units
+
+Evidence for D10 and D20, collected 2026-11-11 on RAGSpark's two DGX Spark
+units (DGX OS 7.6.0, driver 580.178.04, one QSFP cable at 200 Gb/s, MTU 9000)
+in a window of 1 h 30 min on the production head: the 27B stopped, the
+embedding model and the reranker moved to the node, RAGFlow's data kept.
+DeepSeek-V4-Flash-Vision-Exp at revision `6821d6ad` (167.8 GB, 84 files,
+checked against the hub on both units), image `vllm-gb10` v0.31.0-gb10.1
+(D20), tensor parallelism across the two units with vLLM's own multi-node
+launch, KV cache in FP8, the built-in draft model proposing 3 tokens.
+
+- **Memory.** A KV cache sized as a share of memory does not fit next to
+  RAGFlow, so it is fixed. 4 GiB at 131,072 tokens and 6 GiB at 65,536 failed
+  vLLM's start check (6.71 and 6.48 GiB needed); 12 GiB at 65,536 tokens with
+  batches of 4,096 starts and holds 233,388 tokens, 3.5 requests of 64k.
+  Weights 79.5 GiB on each unit, read in 152 s on the head and 113 s on the
+  node; the API answered about 8.5 minutes after the start. Then 15–16 GiB
+  stayed available on the head and 11–12 on the node.
+- **Swap.** The default loader reads the weights through the page cache; while
+  it did, about 10 GiB of other memory went to swap on each unit — on the
+  head Elasticsearch, RAGFlow and MySQL fell to about 0.1 GiB resident. The
+  pages came back as needed; over the next hour the head's available memory
+  drifted from 16 to 9 GiB.
+- **Speed** (the harness of sections 12 and 16):
+
+  | | DeepSeek, two units | 27B, one unit |
+  |---|---|---|
+  | 1k context, tok/s | 55.4 | 25.9 |
+  | 8k context, tok/s | 58.7 | 26.2 |
+  | 8k, first token | 2.95 s | 6.30 s |
+  | 4 concurrent, aggregate tok/s | 130.8 | 84.5 |
+  | 8 concurrent, aggregate tok/s | 203.8 | 135.5 |
+
+  The draft model's tokens were accepted 74% of the time, 3.2 tokens a step.
+- **Answers.** With thinking off, the default, the answer is in the answer
+  field and the reasoning field stays empty; with thinking on the reasoning
+  comes separately. A tool call and an image description: correct. 30
+  language-probe answers: no Chinese or Japanese. By its own answers the
+  model's knowledge ends around May 2025.
+- **Through RAGFlow** (a temporary chat on DeepSeek, the harness of section 8):
+  the acceptance test passed. Sample set: 7/7 and the refusal 1/1 at every
+  level, medians 1, 6, 36, 34 and 42 s from Naive to Ultra (the 27B: 2, 11, 41,
+  36, 40). MSI manual, Plain Text: Naive, Low and Medium 8/8 each, refusals
+  2/2, 2/2 and 0/2 — the same as the 27B and Qwen 3.6.
+- **Scans** (the four pages of section 10, 150 dpi, blurred, compared with the
+  PDF's text layer word by word): with the model's own 384 vision tokens a
+  page, 99.4% of words and numbers in 45 s, but 95.5% on a dense sheet (two
+  pages side by side). With 1536 tokens (`--hf-overrides vision_max_n_token`),
+  99.6% of words and 100% of numbers in 49 s, and 98.9% / 98.1% on the dense
+  sheet in 74 s. The 27B: 99.6% / 100% and 99.8% / 100%, 88 s each. Stack
+  mode uses 1536.
+- **A lost half.** The node's half killed during a request: the head's
+  `/health` stayed 200 for about 290 s, the request failed with HTTP 500
+  after 316 s, and the head's vLLM exited with code 0; the node's half never
+  noticed the head going away. Hence `VLLM_EXECUTE_MODEL_TIMEOUT_SECONDS=60`,
+  the restart policy `always` and `ragspark watch` (D10).
+- **Loaders** (the node alone, Qwen 3.6, 23 GB): the default loader read the
+  weights in 150 s and left 93% of them in the page cache (+21.6 GiB);
+  `--load-format instanttensor` read them in 7.4 s into GPU memory, with
+  nothing in the page cache. A container memory limit does not help: GPU
+  memory is not charged to it, and it does not contain the page cache either.
+  TCPStore listens on every address (`*:29501`), the engine's message queue on
+  the cable address only (D12).
+- **instanttensor with two halves: a failure.** Chosen after the loader test,
+  it went into the first production switch. The head's loader set out to read
+  all 156 GB and stalled at 28 GB for 25 minutes, with 1.3 GiB available and
+  12.5 GiB in swap; both units stopped answering over ssh, and the node's
+  embedding model and reranker became too slow for the relays. The switch
+  rolled back to the 27B by itself; the node needed a reboot. The loader reads
+  into GPU memory, which on GB10 is the RAM itself and is neither reclaimed
+  nor swapped; the one-unit test could not show it. Since `ae23df2` the stack
+  LLM uses the default loader again — a test keeps `--load-format` out — and
+  `ragspark watch` has the memory fuse, which stops a half below 4 GiB
+  available before its unit stops answering.
+
+## 18. Stack mode in production
+
+The node installed on the second unit and the production head switched to
+DeepSeek on 2026-11-11, then a crash of one half and a reboot of both units.
+Release `ae23df2` on both units.
+
+- **Node install** (`sudo ./install.sh --role node`, images and weights
+  already present): nothing downloaded; the embedding model and the reranker
+  healthy on `192.168.100.11:8001` and `:8002` only — the LAN address does not
+  answer on those ports; the node's half waiting for the head; the watch timer
+  running. From the head over the cable: health 200, a 1024-dimension
+  embedding, a rerank.
+- **Switch** (`sudo ragspark llm deepseek-v4-flash-vision` on the head): the
+  cable and node checks passed, the relays took over, both halves read the
+  weights in 27 s (still in the page cache), the API answered after 9.6
+  minutes and every service was ready after 10.2. Available memory during the
+  load at least 12.0 GiB on the head and 10.7 on the node; afterwards 10.3 and
+  10.7, also under the speed benchmark. The head's 16 GiB of swap filled for
+  about a minute while 28–32 GiB stayed available (DECISIONS, open
+  questions).
+- **A registration that did not finish.** A superuser login by another tool
+  during step 3 ended the installer's RAGFlow session — RAGFlow keeps one per
+  user. Three requests failed with HTTP 401: a scan dataset's document and the
+  vision instance stayed on the 27B, and the acceptance test did not run.
+  `sudo ragspark llm deepseek-v4-flash-vision` again finished the registration
+  in seconds, and `sudo ragspark acceptance` passed in 42 s: two answers with
+  citations in 1 s each, the refusal, Low in 6 s, the assistant chat.
+- **Checks:** the smoke test of section 17 passed; sample set Naive 7/7 and
+  1/1 (median 2 s), Low 7/7 and 1/1 (6 s).
+- **Speed:** 55.8 tok/s at 1k, 57.9 at 8k, 141.4 aggregate with 4 concurrent
+  requests and 201.5 with 8 — as in the window.
+- **A crash of the node's half** (its GPU worker killed): Docker restarted the
+  node's half at once, and once more — apparently its first start met the
+  head's half, which had not noticed yet. The head's half was restarted a
+  minute after the crash, by every sign by the watch after two test requests
+  without an answer: Docker's restart count stayed 0. The pair answered again
+  6.5 minutes after the crash, the weights still in the page cache. RAGFlow
+  and the databases were not restarted; at least 12.2 GiB stayed available.
+- **Reboot of both units,** one right after the other, as after a power loss:
+  both stacks started by themselves. The node was up about 35 s after its
+  reboot command and the head after about 2 minutes; RAGFlow's web interface
+  answered 1.5 minutes after the head booted, before the LLM, and the LLM
+  after 6 minutes. Then all
+  9 services on the head and 3 on the node healthy, RAGFlow's models, datasets
+  and chats as before, the sample set at Naive and Low 7/7 and 1/1. At least
+  14.2 GiB available on the head and 11.3 on the node; the head's swap filled
+  once more during the load.
+- **Network:** on the local network the head listens on ports 22, 80 and
+  29501 only.
+- **Decision:** production stays on DeepSeek in stack mode.
