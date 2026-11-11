@@ -78,6 +78,14 @@ MESSAGES = {
                         "половина LLM на головном узле не отвечает {s} с, эта половина ждёт её впустую"),
     "watch_no_answer": ("{n} test requests in a row got no answer although /health reported ready",
                         "{n} пробных запроса подряд без ответа, хотя /health сообщал о готовности"),
+    "watch_fuse": ("memory fuse: stopped {name}, only {gib} GiB of memory available (limit {limit} GiB); "
+                   "it stays stopped until sudo ragspark start or a reboot",
+                   "предохранитель памяти: остановлен {name}, свободно только {gib} GiB памяти (порог {limit} GiB); "
+                   "он не запустится до sudo ragspark start или перезагрузки"),
+    "status_fuse": ("The memory fuse stopped this unit's half of the LLM at {time} ({gib} GiB available). "
+                    "Find what took the memory, then: sudo ragspark start",
+                    "Предохранитель памяти остановил половину LLM на этом узле в {time} (свободно было {gib} GiB). "
+                    "Выясните, что заняло память, затем: sudo ragspark start"),
 
     # ------------------------------------------------------------- general
     "need_root": ("Run as root: {cmd}", "Запустите от root: {cmd}"),

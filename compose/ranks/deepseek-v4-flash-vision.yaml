@@ -84,10 +84,11 @@ services:
       - ${RAGSPARK_HEAD_IP:-192.168.100.10}
       - --master-port
       - "29501"                         # torch's TCPStore listens on every address (accepted, D12.3)
-      # Weights straight to GPU memory: 7 s instead of 150 s per 22 GB, and none of the 168 GB stays
-      # in the page cache, which otherwise pushed RAGFlow's databases into swap (VALIDATION 17).
-      - --load-format
-      - instanttensor
+      # The default weight loader, on purpose. --load-format instanttensor loads into GPU memory,
+      # which on a Spark is the same RAM and is neither reclaimed nor swapped. With two halves it set
+      # out to read all 156 GB on the head, stalled there at 28 GB, and both units ran out of memory
+      # (VALIDATION 17). The default loader reads through the page cache, which the kernel reclaims;
+      # ~10 GiB of other memory goes to swap during the load.
       # Memory: the KV cache is fixed, not a share. 12 GiB holds 233k tokens (3.5 requests of 64k);
       # the start-up check still wants 0.80 of the memory free.
       - --gpu-memory-utilization

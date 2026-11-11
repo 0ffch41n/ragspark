@@ -121,16 +121,26 @@ def set_env(path, key, value):
     os.replace(tmp, path)
 
 
-def mem_total_gib():
-    """MemTotal from /proc/meminfo in GiB (the unified memory on DGX Spark); 0 when unreadable."""
+def _meminfo_gib(key):
     try:
         with open("/proc/meminfo") as f:
             for line in f:
-                if line.startswith("MemTotal:"):
+                if line.startswith(key + ":"):
                     return int(line.split()[1]) / 1024 / 1024
     except (OSError, ValueError, IndexError):
         pass
-    return 0
+    return None
+
+
+def mem_total_gib():
+    """MemTotal from /proc/meminfo in GiB (the unified memory on DGX Spark); 0 when unreadable."""
+    return _meminfo_gib("MemTotal") or 0
+
+
+def mem_available_gib():
+    """MemAvailable in GiB: free memory plus what the kernel can reclaim, such as the page cache.
+    None when unreadable."""
+    return _meminfo_gib("MemAvailable")
 
 
 def host_address():

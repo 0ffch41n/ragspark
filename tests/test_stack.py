@@ -109,6 +109,8 @@ class ComposeFiles(unittest.TestCase):
             self.assertIn("@sha256:", rank["image"])
             self.assertEqual(rank["restart"], "always")              # vLLM exits with 0 when it loses its partner
             self.assertNotIn("--node-rank", entry)
+            # instanttensor ran both units out of memory with two halves (VALIDATION 17)
+            self.assertNotIn("--load-format", entry)
             self.assertNotIn("NCCL_IB_HCA", rank["environment"])     # one half of the cable only
             self.assertNotIn("NCCL_IB_GID_INDEX", rank["environment"])
             env = self.load("compose", "llm", e["id"] + ".yaml")["services"]["ragflow"]["environment"]
@@ -203,6 +205,89 @@ class WatchNode(unittest.TestCase):
         self.assertEqual(watch.started_epoch("1970-01-01T00:01:40.123456789Z"), 100)
         self.assertEqual(watch.started_epoch("0001-01-01T00:00:00Z"), watch.started_epoch("0001-01-01T00:00:00Z"))
         self.assertEqual(watch.started_epoch(""), 0)
+
+
+class WatchFuse(unittest.TestCase):
+    RUNNING = ("running", 1000, "healthy")
+    LOW = watch.FUSE_GIB - 0.5
+
+    def test_two_low_runs_in_a_row_stop_the_half(self):
+        state, action = watch.decide_fuse({}, self.RUNNING, self.LOW, 2000)
+        self.assertIsNone(action)
+        state, action = watch.decide_fuse(state, self.RUNNING, self.LOW, 2030)
+        self.assertEqual(action, "stop")
+        self.assertEqual((state["fuse_at"], state["fuse_gib"], state["mem_low"]), (2030, round(self.LOW, 1), 0))
+
+    def test_one_good_run_resets_the_count(self):
+        state, _ = watch.decide_fuse({}, self.RUNNING, self.LOW, 2000)
+        state, _ = watch.decide_fuse(state, self.RUNNING, watch.FUSE_GIB + 1, 2030)
+        state, action = watch.decide_fuse(state, self.RUNNING, self.LOW, 2060)
+        self.assertIsNone(action)
+
+    def test_a_normal_start_never_trips_it(self):
+        state = {}
+        for now in range(0, 3600, 30):               # at least 9 GiB available while loading (VALIDATION 17)
+            state, action = watch.decide_fuse(state, self.RUNNING, 9.0, now)
+            self.assertIsNone(action)
+
+    def test_nothing_to_stop_or_nothing_known(self):
+        for rank, gib in ((None, 0.5), (("exited", 1000, ""), 0.5), (("restarting", 1000, ""), 0.5),
+                          (self.RUNNING, None)):
+            state, action = watch.decide_fuse({"mem_low": 1}, rank, gib, 2000)
+            self.assertIsNone(action)
+            self.assertEqual(state["mem_low"], 0)
+
+    def test_the_record_stays_until_the_half_runs_again(self):
+        state = {"fuse_at": 2030, "fuse_gib": 1.2}
+        state, _ = watch.decide_fuse(state, ("exited", 1000, ""), 100.0, 2100)
+        self.assertEqual(state["fuse_at"], 2030)
+        state, _ = watch.decide_fuse(state, ("running", 1000, ""), 100.0, 2130)     # docker stop had failed
+        self.assertEqual(state["fuse_at"], 2030)
+        state, _ = watch.decide_fuse(state, ("running", 2500, ""), 100.0, 2600)     # started again
+        self.assertNotIn("fuse_at", state)
+        self.assertNotIn("fuse_gib", state)
+
+    def test_fuse_record_reads_the_state_file(self):
+        import tempfile
+        from unittest import mock
+        from rsinst import paths
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(paths, "PREFIX", tmp):
+            self.assertIsNone(watch.fuse_record())
+            os.makedirs(paths.install_dir())
+            watch._save_state(watch.state_path(), {"mem_low": 1})
+            self.assertIsNone(watch.fuse_record())
+            watch._save_state(watch.state_path(), {"fuse_at": 2030, "fuse_gib": 1.2})
+            self.assertEqual(watch.fuse_record(), (2030, 1.2))
+
+    def test_watch_stops_the_half_with_docker_and_does_nothing_else(self):
+        import tempfile
+        from unittest import mock
+        from rsinst import paths
+        calls, pings = [], []
+        manifest = mock.Mock(status="installed", config={"llm": "deepseek-v4-flash-vision"})
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(paths, "PREFIX", tmp), \
+                mock.patch.object(watch.Manifest, "load", return_value=manifest), \
+                mock.patch.object(watch, "rank_state", return_value=("rs-rank", self.RUNNING)), \
+                mock.patch.object(watch, "mem_available_gib", return_value=1.0), \
+                mock.patch.object(watch, "run", side_effect=lambda cmd, **kw: (calls.append(cmd), (0, ""))[1]), \
+                mock.patch.object(watch.stackmode, "http_ok", side_effect=lambda *a, **kw: pings.append(a) or True):
+            os.makedirs(paths.install_dir())
+            self.assertEqual(watch.watch(None), 0)                      # first low run: only counted
+            self.assertEqual((calls, len(pings)), ([], 1))
+            self.assertEqual(watch.watch(None), 0)                      # second: stop, no test request
+            self.assertEqual((calls, len(pings)), ([["docker", "stop", "-t", "30", "rs-rank"]], 1))
+            self.assertEqual(watch.fuse_record()[1], 1.0)
+
+    def test_available_memory_from_meminfo(self):
+        from unittest import mock
+        from rsinst import sysutil
+        data = "MemTotal:       125829120 kB\nMemFree:          524288 kB\nMemAvailable:    4194304 kB\n"
+        with mock.patch("builtins.open", mock.mock_open(read_data=data)):
+            self.assertEqual(sysutil.mem_available_gib(), 4.0)
+            self.assertEqual(sysutil.mem_total_gib(), 120.0)
+        with mock.patch("builtins.open", side_effect=OSError):
+            self.assertIsNone(sysutil.mem_available_gib())       # unknown must not trip the fuse
+            self.assertEqual(sysutil.mem_total_gib(), 0)
 
 
 if __name__ == "__main__":

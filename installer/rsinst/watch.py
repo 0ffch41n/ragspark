@@ -15,6 +15,12 @@ that is still forming (at boot, both start together) is never interrupted.
 
 On the head, watch sends a one-token request whenever the API reports healthy: /health stays 200
 while the engine behind it hangs. Two failures in a row restart the head's half.
+
+On both units a memory fuse stops - not restarts - the local half when less than FUSE_GIB of
+memory is available on two runs in a row. A unit that runs out of memory does not fail, it
+thrashes: everything else goes to swap, ssh stops answering and only a reboot helps (VALIDATION
+17). Stopping the half frees ~90 GiB. It stays stopped until `ragspark start` or a reboot, so a
+start that does not fit cannot loop; the other half acts as if its partner were lost.
 """
 import calendar
 import json
@@ -24,12 +30,14 @@ import time
 
 from . import catalog, paths, stackmode, ui
 from .manifest import Manifest
-from .sysutil import read_env, run
+from .sysutil import mem_available_gib, read_env, run
 
 SERVICE = stackmode.RANK
 PING_FAILS = 2           # head: failed one-token requests in a row before a restart
 GRACE_S = 60             # node: how long the head must stay unreachable
 PING_TIMEOUT_S = 90      # a request may wait behind a long prefill
+FUSE_GIB = 4             # both: stop the local half below this much available memory (a normal
+FUSE_RUNS = 2            # start leaves at least 9 GiB), seen on this many runs in a row
 
 
 # ------------------------------------------------------------------ decisions (no I/O)
@@ -69,6 +77,25 @@ def decide_node(state, rank, head_ok, now):
         state.update(head_seen_ok=False, head_lost_at=None)
         return state, "restart"
     return state, None
+
+
+def decide_fuse(state, rank, avail_gib, now):
+    """rank: (status, started_epoch, health) of the local half or None; avail_gib: MemAvailable in GiB
+    or None. Returns (state, action) with action None or "stop"."""
+    if rank is None or rank[0] != "running":
+        state["mem_low"] = 0               # nothing to stop; a record of the last stop stays for status
+        return state, None
+    if state.get("fuse_at") is not None and rank[1] > state["fuse_at"]:
+        state.pop("fuse_at")               # started again since the fuse stopped it
+        state.pop("fuse_gib", None)
+    if avail_gib is None or avail_gib >= FUSE_GIB:
+        state["mem_low"] = 0
+        return state, None
+    state["mem_low"] = state.get("mem_low", 0) + 1
+    if state["mem_low"] < FUSE_RUNS:
+        return state, None
+    state.update(mem_low=0, fuse_at=now, fuse_gib=round(avail_gib, 1))
+    return state, "stop"
 
 
 # ------------------------------------------------------------------ probes
@@ -115,6 +142,18 @@ def _save_state(path, state):
     os.replace(tmp, path)
 
 
+def state_path():
+    return os.path.join(paths.install_dir(), "watch.json")
+
+
+def fuse_record():
+    """(epoch, GiB available) of the fuse's last stop of the local half, or None. Cleared once the
+    half runs again."""
+    state = _load_state(state_path())
+    at = state.get("fuse_at")
+    return (at, state.get("fuse_gib")) if isinstance(at, (int, float)) else None
+
+
 def watch(args):
     manifest = Manifest.load()
     if manifest is None or manifest.status != "installed":
@@ -129,10 +168,17 @@ def watch(args):
         head_ip = read_env(os.path.join(paths.compose_dir(), ".env")).get("RAGSPARK_HEAD_IP") or head_ip
     except OSError:
         pass
-    state_path = os.path.join(paths.install_dir(), "watch.json")
-    state = _load_state(state_path)
+    path = state_path()
+    state = _load_state(path)
 
     name, rank = rank_state(paths.project())
+    state, fuse = decide_fuse(state, rank, mem_available_gib(), time.time())
+    if fuse == "stop" and name:
+        code, out = run(["docker", "stop", "-t", "30", name])
+        ui.status("DO" if code == 0 else "FAIL", ui.t("watch_fuse", name=name, gib=state["fuse_gib"], limit=FUSE_GIB)
+                  + ("" if code == 0 else ": " + out.strip()[-200:]))
+        _save_state(path, state)
+        return 0
     if role == "node":
         head_ok = stackmode.http_ok("http://%s:8000/health" % head_ip)
         state, action = decide_node(state, rank, head_ok, time.time())
@@ -151,5 +197,5 @@ def watch(args):
             _, fresh = rank_state(paths.project())
             if fresh:
                 state["rank_started"] = fresh[1]
-    _save_state(state_path, state)
+    _save_state(path, state)
     return 0

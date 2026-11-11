@@ -4,7 +4,7 @@ import os
 import time
 import urllib.request
 
-from . import paths, stackmode, ui
+from . import paths, stackmode, ui, watch
 from .install import compose_config, step_acceptance, vllm_image
 from .manifest import Manifest
 from .preflight import gpu_reload_test, run_checks
@@ -70,6 +70,10 @@ def status(args):
     for svc, state, health in rows:
         good = state == "running" and health in ("healthy", "")
         ui.status("OK" if good else "WARN", "%-12s %s%s" % (svc, state, " (%s)" % health if health else ""))
+    fuse = watch.fuse_record() if stackmode.is_stack(c.get("llm")) else None
+    if fuse and not any(svc == stackmode.RANK and state == "running" for svc, state, _ in rows):
+        ui.status("WARN", ui.t("status_fuse", time=time.strftime("%Y-%m-%d %H:%M", time.localtime(fuse[0])),
+                               gib=fuse[1]))
     if node:
         # The node has no web interface: is the head's half of the LLM answering?
         ok = stackmode.http_ok("http://%s:8000/health" % head_ip)
