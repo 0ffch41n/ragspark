@@ -401,8 +401,12 @@ sudo ip6tables -I INPUT -p tcp --dport 29501 -j DROP
 ```
 
 The halves use IPv4 on the cable; with other cable addresses change the
-network. The rules last until a reboot: keep them with your firewall's own
-configuration, for example the `iptables-persistent` package.
+network. Tested on a running pair: the port no longer answers from the local
+network, over IPv4 or IPv6, and still takes new connections on the cable —
+what the halves need to meet again after a restart. It is closed to
+`127.0.0.1` as well, which the halves do not use. The rules last until a
+reboot: keep them with your firewall's own configuration, for example the
+`iptables-persistent` package.
 
 **Uninstall** works the same on both units: `sudo ragspark uninstall`. Before
 removing the node, switch the head back to one unit.

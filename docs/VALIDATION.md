@@ -963,5 +963,11 @@ Release `ae23df2` on both units.
   14.2 GiB available on the head and 11.3 on the node; the head's swap filled
   once more during the load.
 - **Network:** on the local network the head listens on ports 22, 80 and
-  29501 only.
+  29501 only. The firewall rules of [INSTALL.md](INSTALL.md), *Stack mode*,
+  applied for a test on the running pair: port 29501 dropped from a PC on
+  the local network over IPv4 and IPv6 (link-local) and from the node's
+  local address; open to new connections from the node over the cable and
+  from the head's own cable address, which its half uses; closed to
+  `127.0.0.1`. Ports 22 and 80, the halves' established connections and the
+  chat unaffected. Removed after the test.
 - **Decision:** production stays on DeepSeek in stack mode.
