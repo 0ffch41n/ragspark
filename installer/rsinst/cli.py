@@ -64,11 +64,19 @@ def build_parser():
     sub.add_parser("prestart", parents=[common])          # used by the systemd unit
     sub.add_parser("watch", parents=[common])             # stack mode: used by the systemd timer
     b = sub.add_parser("backup", parents=[common], help="copy the data now (RAGFlow is unavailable while copying)")
-    b.add_argument("--list", action="store_true", help="list the copies")
-    b.add_argument("--schedule", choices=["on", "off"], help="the nightly copy at 03:30")
+    modes = b.add_mutually_exclusive_group()
+    modes.add_argument("--list", action="store_true", help="list the copies")
+    modes.add_argument("--schedule", choices=["on", "off"], help="the nightly copy at 03:30")
     b.add_argument("--wait-minutes", type=int, help="how long to wait for documents being parsed (default 60)")
     b.add_argument("--dir", help="directory of the copies (default /srv/ragspark/backups)")
-    b.add_argument("--scheduled", action="store_true", help=argparse.SUPPRESS)    # the timer
+    modes.add_argument("--scheduled", action="store_true", help=argparse.SUPPRESS)    # the timer
+    modes.add_argument("--sync", action="store_true", help="retry copying existing backups to the second unit")
+    modes.add_argument("--receive", action="store_true", help=argparse.SUPPRESS)
+    modes.add_argument("--setup-remote", choices=["sender", "receiver"], help="explicit administrator setup of cable backups")
+    b.add_argument("--peer", help="receiver IPv4 on the cable (sender setup)")
+    b.add_argument("--source-ip", help="head IPv4 on the cable (setup)")
+    b.add_argument("--host-key-file", help="verified receiver host key (sender setup)")
+    b.add_argument("--public-key-file", help="sender public key (receiver setup)")
     r = sub.add_parser("restore", parents=[common], help="replace the data with a copy")
     r.add_argument("name", help="a copy from `ragspark backup --list`, or the path of a copy")
     r.add_argument("--dir", help="directory of the copies (default /srv/ragspark/backups)")

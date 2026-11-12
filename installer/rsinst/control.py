@@ -81,7 +81,30 @@ def status(args):
             ui.status("OK" if last[1] < 48 else "WARN", ui.t("status_backup", name=last[0], hours=last[1]))
         else:
             ui.status("WARN", ui.t("status_backup_none"))
+        from . import backup_remote
+        try:
+            configured = backup_remote.config()
+        except (OSError, ValueError, KeyError, TypeError) as e:
+            configured = None
+            ui.status("WARN", ui.t("bk_remote_error", err=str(e)[-200:]))
+        if configured:
+            try:
+                with open(paths.host(backup_remote.BASE + "/sender-status.json")) as f:
+                    remote_status = json.load(f)
+                age = (time.time() - remote_status["time"]) / 3600
+                good = remote_status["ok"] and age < 48
+                ui.status("OK" if good else "WARN", ui.t("status_backup_remote", peer=remote_status["peer"],
+                          state="OK" if remote_status["ok"] else "FAIL", hours=age))
+            except (OSError, ValueError, KeyError, TypeError):
+                ui.status("WARN", ui.t("status_backup_remote_wait"))
     if node:
+        from . import backup, backup_remote
+        if os.path.isfile(paths.host(backup_remote.BASE + "/receiver.json")):
+            last = backup.last_copy()
+            if last:
+                ui.status("OK" if last[1] < 48 else "WARN", ui.t("status_backup", name=last[0], hours=last[1]))
+            else:
+                ui.status("WARN", ui.t("status_backup_node_none"))
         # The node has no web interface: is the head's half of the LLM answering?
         ok = stackmode.http_ok("http://%s:8000/health" % head_ip)
         ui.status("OK" if ok else "WARN", ui.t("status_head_api" if ok else "status_head_api_down", head=head_ip))

@@ -597,9 +597,35 @@ def schedule(manifest, on):
 
 def backup(args):
     manifest = Manifest.load()
+    if getattr(args, "receive", False):
+        if paths.role() != "node" or manifest is None or manifest.status != "installed":
+            return 1
+        from . import backup_remote
+        return backup_remote.receive()
+    setup = getattr(args, "setup_remote", None)
+    if setup:
+        if manifest is None or manifest.status != "installed":
+            return 1
+        from . import backup_setup
+        try:
+            if setup == "sender":
+                backup_setup.sender(manifest, args.peer, args.source_ip, args.host_key_file)
+            else:
+                backup_setup.receiver(manifest, args.source_ip, args.public_key_file)
+            return 0
+        except (OSError, ValueError, RuntimeError, TypeError) as e:
+            ui.status("FAIL", ui.t("bk_remote_setup_failed", err=str(e)))
+            return 1
+    if paths.role() == "node" and getattr(args, "list", False):
+        from . import backup_remote
+        if os.path.isfile(paths.host(backup_remote.BASE + "/receiver.json")):
+            return list_copies(paths.host(backup_remote.VAULT))
     if not _check(manifest):
         return 1
     root = root_dir(args)
+    if getattr(args, "sync", False):
+        from . import backup_remote
+        return 0 if backup_remote.sync(root, required=True) else 1
     if getattr(args, "list", False):
         return list_copies(root)
     if getattr(args, "schedule", None):
@@ -611,6 +637,9 @@ def backup(args):
     with recoverable_signals():
         try:
             code, _ = take(manifest, root, WAIT_PARSE_MIN if wait is None else wait)
+            if code == 0:
+                from . import backup_remote
+                return 0 if backup_remote.sync(root) else 1
             return code
         except (OSError, ValueError, RuntimeError) as e:
             ui.status("FAIL", ui.t("bk_failed", err=str(e)[-300:]))

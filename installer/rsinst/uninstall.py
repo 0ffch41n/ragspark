@@ -84,6 +84,14 @@ def uninstall(args):
         if code != 0:
             ui.status("FAIL", ui.t("un_aborted"))
             return 1
+    units = data.get("backup_remote_units", [])
+    for timer in (u for u in units if u.endswith(".timer")):
+        run(["systemctl", "disable", "--now", timer])
+    for service in (u for u in units if u.endswith(".service")):
+        code, _ = run(["systemctl", "stop", service])
+        if code != 0:
+            ui.status("FAIL", ui.t("un_aborted"))
+            return 1
     if data.get("unit"):
         code, out = run(["systemctl", "disable", "--now", data["unit"]])
         if code == 0:
