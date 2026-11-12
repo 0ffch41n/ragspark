@@ -7,7 +7,7 @@ from . import paths, ui
 from .manifest import Manifest
 
 COMMANDS = ["install", "check", "status", "start", "stop", "restart", "logs", "llm", "acceptance", "uninstall", "prestart",
-            "watch"]
+            "watch", "backup", "restore"]
 
 
 def _common(suppress):
@@ -63,6 +63,15 @@ def build_parser():
     sub.add_parser("acceptance", parents=[common], help="run the acceptance test again")
     sub.add_parser("prestart", parents=[common])          # used by the systemd unit
     sub.add_parser("watch", parents=[common])             # stack mode: used by the systemd timer
+    b = sub.add_parser("backup", parents=[common], help="copy the data now (RAGFlow is unavailable while copying)")
+    b.add_argument("--list", action="store_true", help="list the copies")
+    b.add_argument("--schedule", choices=["on", "off"], help="the nightly copy at 03:30")
+    b.add_argument("--wait-minutes", type=int, help="how long to wait for documents being parsed (default 60)")
+    b.add_argument("--dir", help="directory of the copies (default /srv/ragspark/backups)")
+    b.add_argument("--scheduled", action="store_true", help=argparse.SUPPRESS)    # the timer
+    r = sub.add_parser("restore", parents=[common], help="replace the data with a copy")
+    r.add_argument("name", help="a copy from `ragspark backup --list`, or the path of a copy")
+    r.add_argument("--dir", help="directory of the copies (default /srv/ragspark/backups)")
     u = sub.add_parser("uninstall", parents=[common], help="remove RAGSpark and all its data")
     u.add_argument("--keep-images", action="store_true", help="keep the Docker images the installer pulled")
     u.add_argument("--keep-models", action="store_true", help="keep the model weights the installer downloaded")
@@ -92,13 +101,13 @@ def main(argv=None):
         choice = ui.ask("Language / Язык (ru, en)", lang)
         ui.set_lang(choice if choice in ("ru", "en") else lang)
 
-    from . import control, install, switch, uninstall, watch
+    from . import backup, control, install, switch, uninstall, watch
     handlers = {
         "install": install.install, "uninstall": uninstall.uninstall,
         "check": control.check, "status": control.status, "start": control.start,
         "stop": control.stop, "restart": control.restart, "logs": control.logs,
         "acceptance": control.acceptance, "prestart": control.prestart, "llm": switch.llm,
-        "watch": watch.watch,
+        "watch": watch.watch, "backup": backup.backup, "restore": backup.restore,
     }
     try:
         return handlers[args.command](args)

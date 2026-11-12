@@ -74,6 +74,13 @@ def status(args):
     if fuse and not any(svc == stackmode.RANK and state == "running" for svc, state, _ in rows):
         ui.status("WARN", ui.t("status_fuse", time=time.strftime("%Y-%m-%d %H:%M", time.localtime(fuse[0])),
                                gib=fuse[1]))
+    if not node:
+        from . import backup
+        last = backup.last_copy()
+        if last:
+            ui.status("OK" if last[1] < 48 else "WARN", ui.t("status_backup", name=last[0], hours=last[1]))
+        else:
+            ui.status("WARN", ui.t("status_backup_none"))
     if node:
         # The node has no web interface: is the head's half of the LLM answering?
         ok = stackmode.http_ok("http://%s:8000/health" % head_ip)

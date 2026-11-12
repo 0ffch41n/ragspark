@@ -27,6 +27,11 @@ WATCH_SERVICE = "ragspark-watch.service"            # `ragspark watch`, run by t
 WATCH_TIMER = "ragspark-watch.timer"
 WATCH_SERVICE_PATH = "/etc/systemd/system/" + WATCH_SERVICE
 WATCH_TIMER_PATH = "/etc/systemd/system/" + WATCH_TIMER
+BACKUP_DIR = "/srv/ragspark/backups"                  # copies of the data; uninstall keeps them
+BACKUP_SERVICE = "ragspark-backup.service"          # `ragspark backup --scheduled`, run by the timer
+BACKUP_TIMER = "ragspark-backup.timer"
+BACKUP_SERVICE_PATH = "/etc/systemd/system/" + BACKUP_SERVICE
+BACKUP_TIMER_PATH = "/etc/systemd/system/" + BACKUP_TIMER
 ROLES = ("head", "node")
 
 # What the installed copy contains; .env is never copied, it is created in place.

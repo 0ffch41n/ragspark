@@ -70,12 +70,20 @@ def uninstall(args):
     if data.get("models_downloaded") and args.keep_models:
         ui.say("  - " + ui.t("un_kept_models", list=", ".join(data["models_downloaded"])))
     ui.say("  - " + ui.t("un_kept_preexisting"))
+    if paths.role() != "node":
+        ui.say("  - " + ui.t("un_kept_backups", dir=paths.BACKUP_DIR))
     if not ui.confirm(ui.t("un_confirm"), default=False):
         ui.say(ui.t("cancelled"))
         return 1
 
     if data.get("timer"):
         run(["systemctl", "disable", "--now", data["timer"]])
+    if data.get("backup_timer"):
+        run(["systemctl", "disable", "--now", data["backup_timer"]])
+        code, _ = run(["systemctl", "stop", paths.BACKUP_SERVICE])
+        if code != 0:
+            ui.status("FAIL", ui.t("un_aborted"))
+            return 1
     if data.get("unit"):
         code, out = run(["systemctl", "disable", "--now", data["unit"]])
         if code == 0:

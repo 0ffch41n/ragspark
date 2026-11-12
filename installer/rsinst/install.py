@@ -6,7 +6,7 @@ import shutil
 import sys
 import time
 
-from . import catalog, paths, stackmode, ui
+from . import backup, catalog, paths, stackmode, ui
 from .manifest import Manifest, make_dirs
 from .preflight import cable_interface, run_checks
 from .sysutil import compose, host_address, host_timezone, mem_total_gib, project_containers, read_env, run, set_env
@@ -245,10 +245,12 @@ def show_plan(config, resume):
     node = config.get("role") == "node"
     lines = (("plan_node_files", "plan_models", "plan_service", "plan_watch", "plan_cli", "plan_node_docker",
               "plan_downloads") if node else
-             ("plan_files", "plan_models", "plan_service", "plan_watch", "plan_cli", "plan_docker", "plan_downloads"))
+             ("plan_files", "plan_models", "plan_service", "plan_watch", "plan_backup", "plan_cli", "plan_docker",
+              "plan_downloads"))
     for line in lines:
         ui.say("  - " + ui.t(line, dir=paths.INSTALL_DIR, models=config["models_dir"], unit=paths.UNIT_PATH,
-                              cli=paths.CLI_PATH, timer=paths.WATCH_TIMER_PATH, llm=config["llm"], ip=node_ip))
+                              cli=paths.CLI_PATH, timer=paths.WATCH_TIMER_PATH, llm=config["llm"], ip=node_ip,
+                              backup_timer=paths.BACKUP_TIMER_PATH, backups=paths.BACKUP_DIR))
     if node:
         ui.say("  " + ui.t("plan_node_settings", head=head_ip, node=node_ip, llm=config["llm"]))
     else:
@@ -662,6 +664,7 @@ def install(args):
             ("st_start", step_start),
             ("st_models", step_models),
             ("st_acceptance", lambda: step_acceptance(config["lang"], assistant_only=args.skip_acceptance)),
+            ("st_backup", lambda: backup.schedule(manifest, True)),
         ]
     total = len(steps) + 2
 
