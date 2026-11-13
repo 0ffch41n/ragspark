@@ -660,8 +660,9 @@ re-check them before any version bump.
   archive a live Elasticsearch data directory. Check document parsing before
   and after stopping RAGFlow; leave models running. This accepts a web outage
   in exchange for a simple, tested recovery path on the same image versions.
-- **Schedule and history:** explicit opt-in at 03:30 local time, no boot-time
-  catch-up; latest copy per 7 distinct days and 4 calendar weeks, union of both.
+- **Schedule and history:** a fresh head enables 03:30 local-time backups;
+  older installations enable them explicitly, and administrators can disable them.
+  Replication setup is separate. No boot-time catch-up; latest copy per 7 distinct days and 4 calendar weeks, union of both.
   Before-restore safety copies are exempt from automatic retention.
 - **Second unit:** SSH over the cable, pinned host key, dedicated sender key
   and restricted receiving account. Files arrive in an untrusted incoming area;

@@ -101,6 +101,10 @@ LLM's own vision: about 20 s a page with the default LLM, about 7 with Qwen 3.6.
   - [ ] 6.2 — optional monitoring
   - [ ] 6.3 — offline bundle
 
+The upcoming update/offline release contract is documented in
+[UPDATES.md](docs/UPDATES.md). It is a design proposal; `ragspark update` is not
+available yet.
+
 ## Design principles
 
 1. **The installer does not modify the host** beyond what it declares — no DNS

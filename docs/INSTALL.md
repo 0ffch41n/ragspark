@@ -447,6 +447,11 @@ Use `backup --wait-minutes 0` to refuse immediately when parsing is active.
 `backup --dir /path/to/copies` selects another local destination for that command;
 the nightly timer always uses `/srv/ragspark/backups`.
 
+A new head installation enables the nightly timer automatically. On installations
+created before backup support, enable it explicitly with the command above;
+`--schedule off` remains the way to disable it. Remote replication is separate
+and always requires the setup below.
+
 The timer runs at **03:30 in the head's system timezone**. It does not catch up a
 missed night at boot. Disable it with `sudo ragspark backup --schedule off`.
 Each storage location retains the latest copy from each of the newest **7 distinct
@@ -490,7 +495,7 @@ The examples use head `192.168.100.10`, node `192.168.100.11`.
    head's cable IP and a forced command. It has no sudo or supplementary groups.
    The key can upload to `backup-incoming` and ask for a receipt; it cannot open
    a shell, download backups or delete accepted copies.
-4. On the head, make and verify the first copy before enabling a nightly schedule:
+4. On the head, make and verify the first replicated copy:
 
    ```bash
    sudo ragspark backup --wait-minutes 0
@@ -498,8 +503,9 @@ The examples use head `192.168.100.10`, node `192.168.100.11`.
    sudo ragspark status
    ```
 
-   On the node, `sudo ragspark backup --list` lists accepted copies. Then enable
-   the head's nightly timer if it is not already enabled.
+   On the node, `sudo ragspark backup --list` lists accepted copies. On older
+   installations without a nightly schedule, enable it after this check if desired.
+   A fresh head already has the schedule; do not re-enable an intentionally disabled one.
 
 The sender uploads archives first and `backup.json` last. Every 30 s the node's
 root service independently validates incoming files and publishes a private copy
