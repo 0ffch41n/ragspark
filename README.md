@@ -16,7 +16,7 @@ citations — with every model running locally and no data leaving the machine.
 
 - **RAGFlow** for document parsing, chunking, retrieval and the web interface
 - **vLLM** serving the LLM, the embedding model and the reranker on the GB10 GPU
-- **One command** to install, change the LLM and remove (backups: stage 6)
+- **One CLI** to install, change the LLM, back up data, restore and remove
 - **A model catalog**: pick a model that fits your hardware; each entry is
   marked *validated* or *experimental*
 - **Two modes**: `single` (one DGX Spark) and `stack` (two DGX Spark units
@@ -97,6 +97,9 @@ LLM's own vision: about 20 s a page with the default LLM, about 7 with Qwen 3.6.
   - [x] 5.3 — the installer's node role and switching modes ([docs/INSTALL.md](docs/INSTALL.md), *Stack mode*)
   - [x] 5.4 — production on two units, a crash and a reboot ([docs/VALIDATION.md](docs/VALIDATION.md), §18)
 - [ ] **Stage 6** — backups, optional monitoring, offline bundle
+  - [x] 6.1 — local backups, verified replication and isolated data recovery ([docs/INSTALL.md](docs/INSTALL.md), [docs/VALIDATION.md](docs/VALIDATION.md), §19)
+  - [ ] 6.2 — optional monitoring
+  - [ ] 6.3 — offline bundle
 
 ## Design principles
 

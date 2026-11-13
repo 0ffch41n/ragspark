@@ -119,8 +119,9 @@ re-check them before any version bump.
 - **Why:** the version RAGFlow 0.27.x pins; Infinity is not officially
   supported on Linux arm64.
 - **How:** official arm64 image; explicit memory limit (memory is shared with
-  the GPU on GB10); backups through the snapshot API, not a tar of a live
-  data directory.
+  the GPU on GB10); stage 6 uses a tar of the data directory only after
+  Elasticsearch and the other data services stop (D21), not a live-directory
+  copy. The snapshot API is not used by this backup implementation.
 
 ## D5. Object storage — pgsty/silo
 
@@ -650,6 +651,33 @@ re-check them before any version bump.
   community image can disappear: keep a copy in the registry mirror (D13).
   Replace it with an official image once a vLLM release supports the model on
   sm_121.
+
+## D21. Data backups — stopped services and a verified second copy
+
+- **What:** root-only copies of MySQL, MinIO, Elasticsearch, Valkey, head env
+  and installation manifest. Weights and images are obtained separately.
+- **Consistency:** stop RAGFlow and all four databases before archiving; never
+  archive a live Elasticsearch data directory. Check document parsing before
+  and after stopping RAGFlow; leave models running. This accepts a web outage
+  in exchange for a simple, tested recovery path on the same image versions.
+- **Schedule and history:** explicit opt-in at 03:30 local time, no boot-time
+  catch-up; latest copy per 7 distinct days and 4 calendar weeks, union of both.
+  Before-restore safety copies are exempt from automatic retention.
+- **Second unit:** SSH over the cable, pinned host key, dedicated sender key
+  and restricted receiving account. Files arrive in an untrusted incoming area;
+  a root process validates them into a private vault and issues a receipt.
+  Only a matching receipt proves replication. Hourly retry does not stop services.
+  Each location manages its own history; the sender cannot delete accepted copies.
+- **Recovery:** validate before stopping, require identical data-service and
+  RAGFlow image references, take a safety copy, restore data and selected env
+  values, attempt rollback on failure. This is not bare-metal recovery or a
+  migration between RAGFlow versions.
+- **Limits:** SSH encrypts transfer, not stored archives. No off-site copy,
+  ingress quota or automatic cleanup of rejected uploads. Host loss/SIGKILL
+  during copying or restore requires administrator inspection. Recovery of all
+  four data services was demonstrated in isolation; production CLI restore and
+  full application recovery remain untested. See [VALIDATION.md](VALIDATION.md),
+  §19 and [INSTALL.md](INSTALL.md), *Backups and recovery*.
 
 ## Open questions
 

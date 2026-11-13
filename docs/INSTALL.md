@@ -239,6 +239,11 @@ answer" text. Background: D19 in [DECISIONS.md](DECISIONS.md).
 | `ragspark watch` | run by the timer every 30 s, not by hand: keeps the halves of a stack-mode LLM together, with the memory fuse (*Stack mode*) |
 | `sudo ragspark acceptance` | run the acceptance test again |
 | `sudo ragspark check [--gpu-reload]` | system check; see *GPU after a systemd reload* |
+| `sudo ragspark backup [--wait-minutes N]` | save data on the head; a temporary RAGFlow outage |
+| `sudo ragspark backup --list` | list local copies, or accepted copies on a configured node |
+| `sudo ragspark backup --schedule on` / `off` | enable/disable the nightly head backup |
+| `sudo ragspark backup --sync` | retry replication to the second unit without stopping services |
+| `sudo ragspark restore NAME` | replace data on the head after checks, confirmation and a safety copy |
 | `sudo ragspark uninstall` | remove; see *Uninstall* |
 
 `--lang` and `--yes` work with every command.
@@ -410,6 +415,165 @@ reboot: keep them with your firewall's own configuration, for example the
 
 **Uninstall** works the same on both units: `sudo ragspark uninstall`. Before
 removing the node, switch the head back to one unit.
+
+## Backups and recovery
+
+Available since `f6b70d1` (local copies) and `e09da62` (second-unit setup,
+including the directory-permission fix). Run administrative commands with
+`sudo`. Copies contain credentials and documents: keep them root-only.
+
+### What is saved
+
+The head saves MySQL, MinIO, Elasticsearch and Valkey data, the head's `.env`
+and installation manifest to `/srv/ragspark/backups/ragspark-YYYYmmdd-HHMMSS`.
+`backup.json` records image references, sizes and SHA256 checksums. Compression
+is single-threaded zstd, with gzip as a fallback. Model weights, Docker images,
+compilation caches and the host OS are not included. This is a data backup,
+not an image of either machine.
+
+RAGFlow and its four databases stop while copying; model containers keep running.
+By default the command waits up to 60 minutes for document parsing, then refuses
+if parsing remains active or its state cannot be checked. It checks again after
+stopping RAGFlow. Only services that were running are restarted. The first small
+production copy measured 66.5 s of unavailability; larger datasets take longer.
+
+```bash
+sudo ragspark backup
+sudo ragspark backup --list
+sudo ragspark backup --schedule on
+```
+
+Use `backup --wait-minutes 0` to refuse immediately when parsing is active.
+`backup --dir /path/to/copies` selects another local destination for that command;
+the nightly timer always uses `/srv/ragspark/backups`.
+
+The timer runs at **03:30 in the head's system timezone**. It does not catch up a
+missed night at boot. Disable it with `sudo ragspark backup --schedule off`.
+Each storage location retains the latest copy from each of the newest **7 distinct
+days and 4 calendar weeks**, keeping the union. This is not necessarily 11 copies.
+Copies ending in `-before-restore` are never removed automatically.
+
+### Copy to the second Spark
+
+This is explicit setup on an installed head and node; local backups also work
+without it. Requirements: SSH client and `ssh-keygen` on the head, SSH server on
+the node, `rsync` on both, `/usr/bin/rrsync` on the node, and cable connectivity.
+The examples use head `192.168.100.10`, node `192.168.100.11`.
+
+1. Obtain the node's **public** Ed25519 host key through an already trusted
+   administrator SSH session or its local console:
+
+   ```bash
+   cat /etc/ssh/ssh_host_ed25519_key.pub
+   ```
+
+   On the head, create `~/backup-node-known-hosts` with one line:
+   `192.168.100.11 ssh-ed25519 BASE64_PUBLIC_HOST_KEY` (replace the last field
+   with that verified key, omit its comment). Do not establish trust from an
+   unverified network scan.
+2. On the head:
+
+   ```bash
+   sudo ragspark backup --setup-remote sender --peer 192.168.100.11 --source-ip 192.168.100.10 --host-key-file ~/backup-node-known-hosts
+   sudo cat /var/lib/ragspark-backup/id_ed25519.pub
+   ```
+
+   Copy only the printed **public** sender key to `~/backup-sender.pub` on the
+   node using your administrator connection. The private key stays on the head.
+3. On the node:
+
+   ```bash
+   sudo ragspark backup --setup-remote receiver --source-ip 192.168.100.10 --public-key-file ~/backup-sender.pub
+   ```
+
+   Setup creates the dedicated `ragspark-backup` account, restricted to the
+   head's cable IP and a forced command. It has no sudo or supplementary groups.
+   The key can upload to `backup-incoming` and ask for a receipt; it cannot open
+   a shell, download backups or delete accepted copies.
+4. On the head, make and verify the first copy before enabling a nightly schedule:
+
+   ```bash
+   sudo ragspark backup --wait-minutes 0
+   sudo ragspark backup --sync
+   sudo ragspark status
+   ```
+
+   On the node, `sudo ragspark backup --list` lists accepted copies. Then enable
+   the head's nightly timer if it is not already enabled.
+
+The sender uploads archives first and `backup.json` last. Every 30 s the node's
+root service independently validates incoming files and publishes a private copy
+under `/srv/ragspark/backups`; a receipt identifies the name and metadata SHA256.
+The sender reports replication success only after that receipt matches. Local
+backup success alone does not prove a second copy exists. A transfer failure
+keeps the local copy; an hourly timer retries, as does `backup --sync`, without
+stopping RAGFlow. The two locations rotate their own history independently.
+
+The node's `/srv/ragspark` allows traversal; `backup-incoming` is accessible only
+to the receiver and root, and the accepted vault only to root. Service keys and
+configuration live under `/var/lib/ragspark-backup`. Accepted copies cannot be
+overwritten by an incoming copy with the same name. Unfinished/rejected uploads
+have no automatic cleanup or quota yet. Backup files are not encrypted at rest;
+SSH protects transport. A copy on the other Spark is not an off-site backup.
+
+### Check operation
+
+On the head:
+
+```bash
+sudo ragspark backup --list
+sudo ragspark status
+systemctl list-timers --all ragspark-backup.timer ragspark-backup-sync.timer
+sudo journalctl -u ragspark-backup.service -u ragspark-backup-sync.service -n 100 --no-pager
+```
+
+On the node:
+
+```bash
+sudo ragspark backup --list
+systemctl list-timers --all ragspark-backup-receive.timer
+sudo journalctl -u ragspark-backup-receive.service -n 100 --no-pager
+```
+
+If transfer is pending, check cable reachability, the pinned host key and the
+receiver service before retrying `backup --sync`. Do not loosen SSH restrictions.
+Do not change existing systemd units or reload systemd during inference without
+the maintenance procedure in *GPU after a systemd reload*; setup refuses changed
+existing backup units rather than silently reloading them.
+
+### Restore on the head
+
+Restore replaces current application data. Select a maintenance window, stop new
+uploads, and choose a complete copy using `backup --list`. The installed RAGFlow
+and database image references must exactly match those recorded in that copy.
+For loss of the head, first provision a compatible installed head and obtain its
+images and weights separately; these copies do not automate machine rebuilds.
+
+If only the node's copy remains, an administrator must securely transfer the
+whole named directory to the head, preserving its contents and root-only access.
+Use administrator credentials: the restricted upload key deliberately cannot
+retrieve the vault. Do not unpack the archives into production volumes by hand.
+
+```bash
+sudo ragspark restore ragspark-YYYYmmdd-HHMMSS
+```
+
+Replace the example with the chosen name, or give its full directory path.
+The command validates archives and checksums before stopping services, checks
+free space, and asks for confirmation. It creates a `-before-restore` safety copy,
+restores four data volumes and the selected database/application secrets from
+`env`, then restarts previously running services. It does not replace the
+installed manifest, model choice or host setup with the saved manifest. If
+restoration or startup fails, it attempts to restore the safety copy and previous
+configuration. SIGKILL and power loss cannot be handled by that in-process recovery.
+
+Afterwards check `sudo ragspark status`, web login, datasets, document retrieval
+and a chat answer. Keep the safety copy until those checks pass. See
+[VALIDATION.md](VALIDATION.md), §19: isolated recovery of all four data services
+was tested; production `ragspark restore` and full web recovery were not exercised.
+
+Uninstall disables backup timers/services but keeps backup files, transport keys
+and the dedicated receiver account. Their later removal is an explicit admin task.
 
 ## Uninstall
 

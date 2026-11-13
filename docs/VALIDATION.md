@@ -971,3 +971,74 @@ Release `ae23df2` on both units.
   `127.0.0.1`. Ports 22 and 80, the halves' established connections and the
   chat unaffected. Removed after the test.
 - **Decision:** production stays on DeepSeek in stack mode.
+
+## 19. Data backups and isolated recovery (12–13 November 2026)
+
+Code: `f6b70d1` local backup/restore; `26a93ac` replication;
+`e09da62` receiver-parent permissions. Installed on both units. Production:
+head spark-06fb, node spark-4de7, DeepSeek V4 Flash Vision in TP2.
+
+### Transport and the first real copy
+
+Real SSH checks on 12 November: the dedicated key was accepted from the cable
+address, rejected from the LAN address; shell commands, downloads and deletion
+were denied. Partial uploads produced no receipt. Completing the metadata last
+allowed root validation and a matching receipt. With umask 077 a fresh parent
+was initially 0700, blocking the receiver; `e09da62` supplies traversal (0701),
+while the incoming directory and vault stay 0700 under their respective owners.
+
+Copy `ragspark-20261112-161002`, confirmed on the node:
+
+| Measurement | Result |
+|---|---:|
+| RAGFlow downtime recorded by backup | 66.5 s |
+| Total compressed archives | 34,488,929 bytes |
+| MySQL | 6,207,454 bytes |
+| MinIO | 27,992,451 bytes |
+| Elasticsearch | 281,727 bytes |
+| Valkey | 7,297 bytes |
+
+Metadata SHA256:
+`7667560639f412546008f8fa35a7a8a2e882640130943b2f7059967e1933951d`.
+This is a small dataset measurement, not a bound on future downtime.
+
+### Isolated restore drill B4
+
+On 12 November the node's accepted copy was validated and extracted into new
+root-only directories under a separate Compose project and internal network.
+No production volumes, host ports or GPU devices were used. Images matched the
+production digests. Aggregate memory limits were 3.25 GiB; the test would stop
+below 7 GiB available host memory. Test containers were stopped afterwards and
+removed with their temporary data/network on 13 November.
+
+| Check | Result |
+|---|---|
+| Extracted files, bytes/owners/modes checked before startup | MySQL 207, MinIO 285, Elasticsearch 53, Valkey 1 |
+| MySQL | 38 tables passed CHECK TABLE; 1 user, 1 tenant, 3 knowledge bases, 2 documents, 19 dialogs, 0 conversations |
+| Elasticsearch | green; 2 application indices, 46 documents; both search checks passed |
+| MinIO | 38 buckets; all 48 objects read and hashed, 47,380,834 bytes |
+| Valkey | authenticated PONG, 0 keys |
+| Minimum available memory | 9.37 GiB; no memory abort |
+| Original copy and running node model containers | unchanged |
+
+B4 tested the archives and the four restored data services, not the production
+`ragspark restore` command or a restored RAGFlow web application. Rollback paths
+are covered by automated tests, not a production rollback exercise.
+
+### First automatic night and final checks
+
+On **13 November, Europe/Moscow**, `ragspark-backup.service` started at 03:30:10
+and finished at 03:31:15 with result success/exit 0. Copy
+`ragspark-20261113-033010` received the node's validation receipt at 03:31:11.935;
+metadata SHA256:
+`2105e43a220cff474aad44f2f85d09112884adfceaea9d387cb2bcbb53546c9d`.
+The 65 s is total job duration, not a separately measured web outage. Verification
+used service timestamps/result and the node receipt; the root-only archives were
+not re-read during that morning check.
+
+After deploying `e09da62`, head 9 containers healthy; node rank running and
+both pooling services healthy. Web, LLM, embedding and reranker health endpoints
+returned HTTP 200. Model containers had 43 hours uptime, unchanged by backup,
+restore drill or code update. Nightly, hourly sync, node receiver and watch timers
+were active. The 52 backup tests passed on the head with Docker/systemd mocked;
+the new umask regression fails on the old code (0700 instead of 0701).
