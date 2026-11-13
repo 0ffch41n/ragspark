@@ -5,6 +5,7 @@ import os
 import pwd
 import re
 import shutil
+import stat
 
 from . import backup_remote as remote, paths
 from .sysutil import run
@@ -16,6 +17,16 @@ def _private_dir(path, mode=0o700):
     if os.path.islink(path) or st.st_uid != os.geteuid():
         raise ValueError("not an administrator-owned directory: " + path)
     os.chmod(path, mode)
+
+
+def _incoming_parent(path):
+    """Allow receiver traversal without exposing directory listings or the vault."""
+    os.makedirs(path, mode=0o701, exist_ok=True)
+    st = os.lstat(path)
+    mode = stat.S_IMODE(st.st_mode)
+    if not stat.S_ISDIR(st.st_mode) or st.st_uid != os.geteuid() or mode & 0o022:
+        raise ValueError("unsafe incoming parent directory: " + path)
+    os.chmod(path, mode | 0o001)
 
 
 def _write(path, text, mode=0o600):
@@ -88,6 +99,7 @@ def receiver(manifest, source, public_key_file):
     base, incoming, vault = (paths.host(p) for p in (remote.BASE, remote.INCOMING, remote.VAULT))
     _private_dir(base, 0o755)
     _private_dir(base + "/receipts", 0o755)
+    _incoming_parent(os.path.dirname(incoming))
     _private_dir(vault)
     home = base + "/receiver"
     marker = base + "/receiver.json"

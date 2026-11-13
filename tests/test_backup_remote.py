@@ -232,6 +232,9 @@ class Setup(Store):
         home = paths.host(remote.BASE + "/receiver")
         user = SimpleNamespace(pw_uid=os.getuid(), pw_gid=os.getgid(), pw_dir=home, pw_shell="/bin/sh")
         paths.set_role("node")
+        os.makedirs(paths.host("/srv"), exist_ok=True)
+        old_umask = os.umask(0o077)
+        self.addCleanup(os.umask, old_umask)
         os.makedirs(paths.compose_dir(), exist_ok=True)
         Manifest.load().save()
         with mock.patch.object(backup_setup.pwd, "getpwnam", side_effect=[KeyError(), user, user]), \
@@ -244,6 +247,36 @@ class Setup(Store):
         self.assertIn('restrict,from="192.168.100.10",command="/usr/bin/python3 -I ', auth)
         self.assertEqual(os.stat(paths.host(remote.VAULT)).st_mode & 0o777, 0o700)
         self.assertEqual(os.stat(home).st_uid, os.geteuid())
+        parent = os.path.dirname(paths.host(remote.INCOMING))
+        self.assertEqual(os.stat(parent).st_mode & 0o777, 0o701)
+        self.assertEqual(os.stat(paths.host(remote.INCOMING)).st_mode & 0o777, 0o700)
+
+    def test_incoming_parent_preserves_existing_safe_permissions(self):
+        parent = Path(self.tmp, "parent")
+        parent.mkdir(mode=0o755)
+        for mode in (0o700, 0o701, 0o750, 0o755):
+            parent.chmod(mode)
+            backup_setup._incoming_parent(str(parent))
+            self.assertEqual(parent.stat().st_mode & 0o777, mode | 0o001)
+
+    def test_incoming_parent_rejects_unsafe_paths_unchanged(self):
+        parent = Path(self.tmp, "parent")
+        parent.mkdir()
+        for mode in (0o770, 0o707):
+            parent.chmod(mode)
+            with self.assertRaises(ValueError):
+                backup_setup._incoming_parent(str(parent))
+            self.assertEqual(parent.stat().st_mode & 0o777, mode)
+        parent.chmod(0o700)
+        link = Path(self.tmp, "link")
+        link.symlink_to(parent)
+        with self.assertRaises(ValueError):
+            backup_setup._incoming_parent(str(link))
+        self.assertEqual(parent.stat().st_mode & 0o777, 0o700)
+        with mock.patch.object(backup_setup.os, "geteuid", return_value=os.geteuid() + 1):
+            with self.assertRaises(ValueError):
+                backup_setup._incoming_parent(str(parent))
+        self.assertEqual(parent.stat().st_mode & 0o777, 0o700)
 
     def test_remote_timer_commands_have_no_stack_restart(self):
         from rsinst.manifest import Manifest
