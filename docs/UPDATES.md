@@ -269,6 +269,36 @@ pair-failure drills; U5 adds disconnected install/update and image-identity test
 Existing installations need a one-time reviewed bootstrap with administrator sudo.
 Until U3–U4 pass, local-update testing is not a supported stack-upgrade path.
 
+### U2.1 implementation boundary
+
+`installer/rsinst/release.py` validates metadata and selects exact transitions;
+`release_verify.py` verifies signatures with external trust files and inspects
+artifact bytes. These are read-only libraries, not an `update` command. Parsing
+alone does not establish trust. Source/profile selection does not replace later
+checks against the installed inventory, catalog, effective Compose or host.
+Channel high-water state is returned to the caller; persistence, fetching,
+staging, application, restart and rollback are not implemented by these modules.
+Image results explicitly report `archive-bytes-only`, not a verified/imported image.
+
+The bounded code/model reader accepts the POSIX USTAR subset: no PAX/GNU extension
+records, at most 32 path components, USTAR name/prefix byte limits (100/155),
+100,000 total headers including directories, and the 20,000 ordinary-code-file
+limit above. Owners must be numeric 0:0, directory modes 0755, ordinary-file modes
+must match the inventory. `expanded_bytes` is the sum of ordinary-file sizes;
+header/padding overhead has a separate local bound. Gzip is allowed for code only.
+The future publisher must emit this subset rather than assume arbitrary tar works.
+
+JSON nesting is capped at 32. Other collection limits: 10,000 artifacts and
+transitions, 1,000 profiles and entries per role map/restart list, 32 URLs per
+artifact, 100,000 ordinary model files. Trust input is bounded to 256 KiB,
+revocations to 4 MiB, and OpenSSH verification to 15 s. Source files are regular,
+single-link and opened without following any path-component symlink. Trust files
+must belong to the verifier's effective UID (root for production) and not be
+group/world writable; their ancestors must be root/verifier-owned and protected
+(root-owned sticky temporary directories are permitted for isolated tests).
+Checks do not freeze user-writable source files for future use: a later updater
+must own private staging and check the actual bytes it applies.
+
 Sources: [OpenSSH file signatures and allowed signers](https://man.openbsd.org/ssh-keygen),
 [SemVer 2.0.0](https://semver.org/). These define primitives and version syntax;
 all package fields, limits and transition policies above are RAGSpark design choices.
