@@ -282,7 +282,7 @@ def manifest(raw):
         need(not any('/'.join(parts[:n]) in names for n in range(1, len(parts))), 'artifact path collision')
     profiles = {}
     for p in array(d['profiles'], 1, 1000):
-        fields(p, 'id mode llm roles'); ident(p['id']); ident(p['llm'])
+        fields(p, 'id mode llm roles'); ident(p['id']); string(p['llm'], r'[a-z0-9][a-z0-9.-]{0,79}')
         choice(p['mode'], ('single', 'stack'))
         need(p['id'] not in profiles, 'duplicate profile')
         fields(p['roles'], 'head' if p['mode'] == 'single' else 'head node')

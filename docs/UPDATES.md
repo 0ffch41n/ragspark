@@ -299,6 +299,8 @@ group/world writable; their ancestors must be root/verifier-owned and protected
 Checks do not freeze user-writable source files for future use: a later updater
 must own private staging and check the actual bytes it applies.
 
+[Publisher tools and legacy inventory](../build/release/README.md)
+
 Sources: [OpenSSH file signatures and allowed signers](https://man.openbsd.org/ssh-keygen),
 [SemVer 2.0.0](https://semver.org/). These define primitives and version syntax;
 all package fields, limits and transition policies above are RAGSpark design choices.

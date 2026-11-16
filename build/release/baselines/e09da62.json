@@ -1,0 +1,278 @@
+{
+  "files": [
+    {
+      "bytes": 11358,
+      "mode": "0644",
+      "path": "LICENSE",
+      "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+    },
+    {
+      "bytes": 6467,
+      "mode": "0644",
+      "path": "README.md",
+      "sha256": "a7a2a2cad2b8fa12b376ba78b50dc28a3531b7afa27c20ed021f79709a1a5baa"
+    },
+    {
+      "bytes": 9657,
+      "mode": "0644",
+      "path": "README.ru.md",
+      "sha256": "b2258689bec0526affc81c52e1b83c3e6a04274250eac5816102e7b073966a89"
+    },
+    {
+      "bytes": 2509,
+      "mode": "0755",
+      "path": "acceptance/make_sample.py",
+      "sha256": "5866cd8cd958e51bdbcdc37b197744ad15a49481c4c8f3d119d55d38df2680a7"
+    },
+    {
+      "bytes": 526,
+      "mode": "0644",
+      "path": "acceptance/sample-ru.json",
+      "sha256": "ef931a6c948a3134bae2ed26188ee2b0646e1ca3db48610fd9dac704891a4ff1"
+    },
+    {
+      "bytes": 2997,
+      "mode": "0644",
+      "path": "acceptance/sample-ru.md",
+      "sha256": "e0df16d23878cafbe2aa028f9387b50de3a92b17254188585edf8de9a0476ca2"
+    },
+    {
+      "bytes": 51448,
+      "mode": "0644",
+      "path": "acceptance/sample-ru.pdf",
+      "sha256": "53d4eae04acf539befb8a6017234daf57890282b83331fdd267bc779088a2fb8"
+    },
+    {
+      "bytes": 11760,
+      "mode": "0644",
+      "path": "catalog/models.yaml",
+      "sha256": "81595d190ef187a3ed87c0ab3f8d38d3d2bfe5e0ef2d4be7b88bd4d65c273bf8"
+    },
+    {
+      "bytes": 9581,
+      "mode": "0644",
+      "path": "compose/compose.yaml",
+      "sha256": "c43099432e6f195884197b57143f1c2fa32083c977e0db498f34a366258cb758"
+    },
+    {
+      "bytes": 2740,
+      "mode": "0644",
+      "path": "compose/env.example",
+      "sha256": "ba290f0135434f6769ae83e11cec067f82527fb442083f496fb92eae173f86aa"
+    },
+    {
+      "bytes": 1762,
+      "mode": "0755",
+      "path": "compose/init-env.sh",
+      "sha256": "cad32e815dd24773d340246da9057e17f393ca8dfd4df9b8f4d1427752653830"
+    },
+    {
+      "bytes": 1416,
+      "mode": "0644",
+      "path": "compose/llm/deepseek-v4-flash-vision.yaml",
+      "sha256": "cb5706f27f283290ff9a99350153b643a47ae655219dde92f22d9fecc62aacb8"
+    },
+    {
+      "bytes": 2897,
+      "mode": "0644",
+      "path": "compose/llm/qwen-3.6-35b-a3b-nvfp4.yaml",
+      "sha256": "424f2670a36defdf7c8d4df8d3f668b8f2d53e1e9916ba761c54ca91a96aa462"
+    },
+    {
+      "bytes": 2178,
+      "mode": "0644",
+      "path": "compose/llm/qwen-3.8-27b-nvfp4.yaml",
+      "sha256": "dfa8b38c5d2c56296d5916bb80d6f510e37c296b5af4c508e14fe8390236f0e3"
+    },
+    {
+      "bytes": 2872,
+      "mode": "0644",
+      "path": "compose/node/compose.yaml",
+      "sha256": "4b802aeb55fc79620753b276f9f41c44cc324e9a8141f049dc354a383e81897f"
+    },
+    {
+      "bytes": 766,
+      "mode": "0644",
+      "path": "compose/node/llm/deepseek-v4-flash-vision.yaml",
+      "sha256": "c9dc1406339b35db22f7b1b81588984a464103fe4d2e1ace086bdb3154c9c753"
+    },
+    {
+      "bytes": 6336,
+      "mode": "0644",
+      "path": "compose/ranks/deepseek-v4-flash-vision.yaml",
+      "sha256": "116995b08afeda8cf85e0c5b5541f9a9ce5788a973006a53b4f1488deebebbfd"
+    },
+    {
+      "bytes": 2012,
+      "mode": "0644",
+      "path": "compose/relay.py",
+      "sha256": "bc469fd8775ebb06c284090282f5b8f0cedbb10f000963ae57f7646d36720a5c"
+    },
+    {
+      "bytes": 2833,
+      "mode": "0644",
+      "path": "compose/stack.yaml",
+      "sha256": "85cb23b4d44e907f1e4ca6502c0ca04bf6acfc0aede76ab37e3e14e57d0b68cc"
+    },
+    {
+      "bytes": 477,
+      "mode": "0755",
+      "path": "installer/ragspark.py",
+      "sha256": "356a2ef5690a4248b42af6512295238127260f4250aefc769a4c440bf92c39c3"
+    },
+    {
+      "bytes": 65,
+      "mode": "0644",
+      "path": "installer/rsinst/__init__.py",
+      "sha256": "9733d4791795052c50f1d74271d214767a9b273a238e59a9b9f70fdcea35d8b9"
+    },
+    {
+      "bytes": 31537,
+      "mode": "0644",
+      "path": "installer/rsinst/backup.py",
+      "sha256": "42e42f418a52ef83e330854500aeacd9d8b11780f88616d4684da7eb401498c8"
+    },
+    {
+      "bytes": 11982,
+      "mode": "0644",
+      "path": "installer/rsinst/backup_remote.py",
+      "sha256": "65b1f637d61ef6eb153957aec99c91964b87cce0e9600275bb4e051a109952c2"
+    },
+    {
+      "bytes": 6499,
+      "mode": "0644",
+      "path": "installer/rsinst/backup_setup.py",
+      "sha256": "d627af0cb6f53f04745e5f31170e77aef1a1b9d2ae0636289fee75aedf295251"
+    },
+    {
+      "bytes": 5132,
+      "mode": "0644",
+      "path": "installer/rsinst/catalog.py",
+      "sha256": "cc0a078abe5b3d67f4712e4c14d7e7622892e08d22ce78df821dbbf3948c780e"
+    },
+    {
+      "bytes": 7533,
+      "mode": "0644",
+      "path": "installer/rsinst/cli.py",
+      "sha256": "fc282478b7bf53147692eff8f336321e14f21f4dfd914d0fe25257377d7dfe13"
+    },
+    {
+      "bytes": 12546,
+      "mode": "0644",
+      "path": "installer/rsinst/control.py",
+      "sha256": "5f5e132a434f3c77539032db52f30d63da701f7522bc2b60dcf9803ffd92fafe"
+    },
+    {
+      "bytes": 54110,
+      "mode": "0644",
+      "path": "installer/rsinst/i18n.py",
+      "sha256": "8e0c0cc69c80892a910f3d572a9ae909cbebc527832d91762d69fe56db7ac7ba"
+    },
+    {
+      "bytes": 30138,
+      "mode": "0644",
+      "path": "installer/rsinst/install.py",
+      "sha256": "d6f1d5284173303c1a0879c4aaa4aaa345d1e303bda88585b719ef453478469e"
+    },
+    {
+      "bytes": 2449,
+      "mode": "0644",
+      "path": "installer/rsinst/manifest.py",
+      "sha256": "b3077a8da7fa27e37fd1496a347362cf2bd18d1796c0d87bb12fc314b66ef2e3"
+    },
+    {
+      "bytes": 2522,
+      "mode": "0644",
+      "path": "installer/rsinst/paths.py",
+      "sha256": "362467e7d5509979a447dac5c5347d13afbe07e006b6728536dad431f9286398"
+    },
+    {
+      "bytes": 13475,
+      "mode": "0644",
+      "path": "installer/rsinst/preflight.py",
+      "sha256": "2304cc60f31159d459ceba3397994243a38e58c6c13e2b42eb19c35b689beedf"
+    },
+    {
+      "bytes": 2220,
+      "mode": "0644",
+      "path": "installer/rsinst/stackmode.py",
+      "sha256": "f1eab061ce2e6cb4c367b427ef62ac266c6596ad276d3bb993e9e1d9780bdfcb"
+    },
+    {
+      "bytes": 8049,
+      "mode": "0644",
+      "path": "installer/rsinst/switch.py",
+      "sha256": "3c863df7b432b2f24bf8dd4452f417a25da51df4d97eb292a1b5ba44d2a7fa00"
+    },
+    {
+      "bytes": 6417,
+      "mode": "0644",
+      "path": "installer/rsinst/sysutil.py",
+      "sha256": "4af53afeb4733947f5fcb6fde33a45f4d411be9b47240c9d2075769eabc1ea2d"
+    },
+    {
+      "bytes": 3303,
+      "mode": "0644",
+      "path": "installer/rsinst/ui.py",
+      "sha256": "fa58c9285c2721d4025d0042fa371c0b1f80a343f06932a5d558ec6cb253ca15"
+    },
+    {
+      "bytes": 6083,
+      "mode": "0644",
+      "path": "installer/rsinst/uninstall.py",
+      "sha256": "a8523695157e2282eafcaa223d0ee0156dd1f8a693dc9b48a195cc8442827fe4"
+    },
+    {
+      "bytes": 9009,
+      "mode": "0644",
+      "path": "installer/rsinst/watch.py",
+      "sha256": "819f823e7da26a54f3cd7d141aa69874933388aa20b5ef64ec742877f5abe3b8"
+    },
+    {
+      "bytes": 21384,
+      "mode": "0755",
+      "path": "tools/acceptance.py",
+      "sha256": "7baa10cb17631e152c1f7d796b4a6b817c83176a0591d03e18cbc24b960267f0"
+    },
+    {
+      "bytes": 401,
+      "mode": "0644",
+      "path": "tools/backup_receive.py",
+      "sha256": "6bfb74daaff424e311fea86090c41355420a2d0eb30213ca6556c2006ac90c4e"
+    },
+    {
+      "bytes": 14803,
+      "mode": "0755",
+      "path": "tools/mode_eval.py",
+      "sha256": "ebe1654d12de908497b8956d7125d00985390e9bc6a9382eafdbfa888304391f"
+    },
+    {
+      "bytes": 4659,
+      "mode": "0755",
+      "path": "tools/model_probe.py",
+      "sha256": "fbe33ceb771e12ec1eb705e204d761cffeea8f43825caf8e38ed187f3bef8ab7"
+    },
+    {
+      "bytes": 3704,
+      "mode": "0755",
+      "path": "tools/pin_images.py",
+      "sha256": "22496b17e403168c18a7353a1c16efebb78a38ed470c54eefa6c79efb6ae7cd2"
+    },
+    {
+      "bytes": 14859,
+      "mode": "0755",
+      "path": "tools/rag_eval.py",
+      "sha256": "a8dfbe19952c29862b6fcf619cc8ce61fd4dae6277eacff7a0d244fa692f8409"
+    },
+    {
+      "bytes": 25181,
+      "mode": "0755",
+      "path": "tools/ragflow_models.py",
+      "sha256": "abfba46485caf426dd0ef76110342ae72bd084ee1298304446416d26350d76d5"
+    }
+  ],
+  "source": {
+    "inventory_sha256": "ed1c6ea18e863e84d284f4113402118b1e27dead64943f8445cf366628d15bba",
+    "legacy_commit": "e09da628575d0245ed3afe2524e19ce34b7dfc97"
+  }
+}
