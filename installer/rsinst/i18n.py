@@ -5,6 +5,18 @@ that both texts are filled in and that their {placeholders} match.
 """
 
 MESSAGES = {
+    "up_confirm_apply": ("Apply this code-only release?", "Применить это обновление кода?"),
+    "up_confirm_rollback": ("Restore the previous code release?", "Восстановить предыдущую версию кода?"),
+    "up_applied": ("Code update committed.", "Обновление кода применено."),
+    "up_recover": ("Recovery required. Use sudo ragspark update --resume or --rollback.",
+                    "Требуется восстановление. Выполните sudo ragspark update --resume или --rollback."),
+    "up_restored": ("Update failed. The previous code was restored.",
+                     "Обновление не прошло. Предыдущий код восстановлен."),
+    "up_done_phase": ("Saved update state {phase}.", "Состояние операции {phase}."),
+    "up_recovery_source": ("Recovery uses the saved operation. Remove --from.",
+                            "Восстановление использует сохранённую операцию. Уберите --from."),
+    "up_gate_required": ("This installation requires the independent update runner.",
+                          "Для этой установки требуется независимый запускатель обновлений."),
     "up_version": ('Installed {from} → release {to} ({mode}, {llm})', 'Установлено {from} → выпуск {to} ({mode}, {llm})'),
     "up_stack": ('Stack preview on head only. Node readiness and coordinated application are pending U3–U4.', 'Предварительный план на head. Проверка второго узла и обновление пары появятся в U3–U4.'),
     "up_current": ('This exact release is installed.', 'Этот выпуск уже установлен.'),

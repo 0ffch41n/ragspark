@@ -157,7 +157,7 @@ def discover(root, bundle):
     floor(identity, state['release'])
     if bundle is not None and state['release'] != identity:
         persist(root, {'channel': channel, 'release': identity})
-    return release, identity, key, revoked
+    return release, identity, key, revoked, (raw, sig)
 
 
 def stage_artifact(stage, bundle, artifact):

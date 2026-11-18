@@ -36,9 +36,9 @@ def installed(root, old, key, revoked):
     return current, files, sequence
 
 
-def disk_plan(stage, old, models_dir, code, files, missing, transition):
+def disk_plan(stage, old, models_dir, code, files, missing, transition, journal=0):
     space = host.Space()
-    space.add(stage, code['expanded_bytes'] + sum(a['bytes'] for a in missing))
+    space.add(stage, code['expanded_bytes'] + sum(a['bytes'] for a in missing) + journal)
     space.add(old, code['expanded_bytes'] + sum(rec['bytes'] for rec in files))
     images = sum(a['expanded_bytes'] for a in missing if a['kind'] == 'image')
     if images:
@@ -57,14 +57,14 @@ def disk_plan(stage, old, models_dir, code, files, missing, transition):
     return list(space.filesystems.values())
 
 
-def check(root, old, bundle, config):
+def check(root, old, bundle, config, apply=None):
     llm = r.string(config.get('llm'), r'[a-z0-9][a-z0-9.-]{0,79}')
     mode = 'stack' if (old / 'compose/node/llm' / (llm + '.yaml')).is_file() else 'single'
     models_dir = Path(config.get('models_dir', paths.DEFAULT_MODELS_DIR))
     r.need(models_dir.is_absolute(), 'invalid model cache path')
     models_dir = Path(paths.host(str(models_dir)))
     with source.workspace(root) as stage:
-        release, identity, key, revoked = source.discover(root, bundle)
+        release, identity, key, revoked, receipt = source.discover(root, bundle)
         current, files, sequence = installed(root, old, key, revoked)
         profiles = [p for p in release['profiles'] if p['mode'] == mode and p['llm'] == llm]
         r.need(len(profiles) == 1, 'no unique profile matching the installed model and mode')
@@ -76,6 +76,9 @@ def check(root, old, bundle, config):
             r.need(current['manifest_sha256'] == identity['manifest_sha256'], 'installed release version reused')
             return dict(plan, same=True)
         transition = r.select_transition(release, current, profile['id'], mode, llm, release['target'], sequence)
+        if apply:
+            r.need(mode == 'single' and transition['impact'] == 'code' and transition['backup'] == 'none',
+                   'apply requires a single-mode code-only transition with no data backup requirement')
         r.need(release['sequence'] > sequence, 'release sequence did not advance')
         code = code_artifact(release)
         artifacts = {a['id']: a for a in release['artifacts']}
@@ -90,9 +93,16 @@ def check(root, old, bundle, config):
                 reused.append(ident)
             else:
                 missing.append(a)
-        space = disk_plan(stage, old, models_dir, code, files, missing, transition)
+        if apply:
+            r.need(len(missing) == 1, 'apply requires all dependencies already installed')
+        journal = 0
+        if apply:
+            journal = (code['expanded_bytes'] + sum(rec['bytes'] for rec in files)
+                       + len(receipt[0]) * 2 + 2 * r.MAX_MANIFEST + 8 * (1 << 20))
+        space = disk_plan(stage, old, models_dir, code, files, missing, transition, journal)
         archive = source.stage_artifact(stage, bundle, code)
         candidate = stage / 'candidate'
+        candidate.mkdir(mode=0o700)
         host.materialize(archive, candidate, code)
         before = {f['path']: f for f in files}
         after = {f['path']: f for f in code['files']}
@@ -100,9 +110,13 @@ def check(root, old, bundle, config):
         host.impact(old, candidate, llm, mode, 'head', transition, profile, artifacts, changed)
         for a in missing[1:]:
             source.stage_artifact(stage, bundle, a)
-        return dict(plan, same=False, transition=transition, missing=[a['id'] for a in missing],
+        plan = dict(plan, same=False, transition=transition, missing=[a['id'] for a in missing],
                     reused=reused, space=space, size=sum(a['bytes'] for a in missing),
                     online=bundle is None)
+        if apply:
+            target = {'version': identity['version'], 'manifest_sha256': identity['manifest_sha256']}
+            return apply(plan, candidate, files, code['files'], current, target, receipt)
+        return plan
 
 
 def show(plan):
@@ -128,8 +142,8 @@ def show(plan):
     ui.say(ui.t('up_pause_unknown' if t['impact'] != 'code' or t['backup'] == 'required' else 'up_pause_zero'))
 
 
-def update(args):
-    root = Path(paths.host('/var/lib/ragspark-update'))
+def update(args, apply=None):
+    root = Path(paths.host(paths.UPDATE_DIR))
     old = Path(paths.install_dir())
     try:
         state = r.parse(v.bounded_read(old / 'manifest.json', 4 << 20))
@@ -142,8 +156,11 @@ def update(args):
             ui.say(ui.t('up_node'))
             return 3
         bundle = Path(args.bundle).absolute() if args.bundle is not None else None
-        show(check(root, old, bundle, config))
-        return 0
+        result = check(root, old, bundle, config, apply)
+        if isinstance(result, dict):
+            show(result)
+            return 0
+        return result
     except source.Busy:
         ui.status('FAIL', ui.t('up_busy'))
         return 4

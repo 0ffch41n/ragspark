@@ -141,7 +141,7 @@ def render(directory, files):
 def units(root):
     result = {}
     for name, funcs in [('install', {'step_service', 'step_watch', '_write_unit'}),
-                        ('backup', {'schedule'})]:
+                        ('backup', {'schedule'}), ('backup_setup', {'_timers'})]:
         file = root / 'installer' / 'rsinst' / (name + '.py')
         if file.exists():
             for node in ast.parse(file.read_bytes()).body:

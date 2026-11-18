@@ -1,6 +1,7 @@
 """Command line: ragspark <command> [options]."""
 import argparse
 import os
+from pathlib import Path
 import sys
 
 from . import paths, ui
@@ -80,8 +81,11 @@ def build_parser():
     r = sub.add_parser("restore", parents=[common], help="replace the data with a copy")
     r.add_argument("name", help="a copy from `ragspark backup --list`, or the path of a copy")
     r.add_argument("--dir", help="directory of the copies (default /srv/ragspark/backups)")
-    update = sub.add_parser("update", parents=[common], help="check a signed release and show the update plan")
-    update.add_argument("--check", required=True, action="store_true", help="verify and display the plan")
+    update = sub.add_parser("update", parents=[common], help="check or apply a signed release")
+    update_mode = update.add_mutually_exclusive_group()
+    update_mode.add_argument("--check", action="store_true", help="verify and display the plan")
+    update_mode.add_argument("--resume", action="store_true", help="resume the saved operation")
+    update_mode.add_argument("--rollback", action="store_true", help="restore code from the saved operation")
     update.add_argument("--from", dest="bundle", metavar="DIRECTORY", help="use a local release directory offline")
     u = sub.add_parser("uninstall", parents=[common], help="remove RAGSpark and all its data")
     u.add_argument("--keep-images", action="store_true", help="keep the Docker images the installer pulled")
@@ -96,12 +100,28 @@ def main(argv=None):
         parser.print_help()
         return 2
     if args.command == "update":
-        from . import update_check
-        ui.set_lang(args.lang or ui.detect_lang())
-        if os.geteuid() != 0 and os.environ.get("RAGSPARK_ALLOW_NONROOT") != "1":
-            print(ui.t("need_root", cmd="sudo ragspark update --check"), file=sys.stderr)
-            return 5
-        return update_check.update(args)
+        from . import update_apply
+        return update_apply.command(args)
+    root = Path(paths.host(paths.UPDATE_DIR))
+    lock = root / 'maintenance.lock'
+    if lock.exists() and (os.geteuid() == 0 or os.environ.get("RAGSPARK_ALLOW_NONROOT") == "1"):
+        from . import update_transaction as txn
+        from .update_source import Busy
+        try:
+            with txn.lock(lock, exclusive=False):
+                if txn.pending(root):
+                    ui.set_lang(args.lang or ui.detect_lang())
+                    ui.status("FAIL", ui.t("up_recover"))
+                    return 7
+                return dispatch(args)
+        except Busy:
+            ui.set_lang(args.lang or ui.detect_lang())
+            ui.status("FAIL", ui.t("up_busy"))
+            return 4
+    return dispatch(args)
+
+
+def dispatch(args):
     manifest = Manifest.load()
     if manifest is not None:
         paths.set_role(manifest.config.get("role", "head"))

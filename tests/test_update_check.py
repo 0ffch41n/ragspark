@@ -16,7 +16,10 @@ import unittest
 from unittest import mock
 
 from release_fixtures import NOW, file_record, pointer, sample, sha
-from rsinst import cli, paths, release as r, release_inventory, ui, update_check as check
+from rsinst import cli, paths, release as r, release_inventory, stackmode, ui, update_check as check
+from rsinst import update_bootstrap, update_transaction as txn
+from rsinst.install import CLI_SCRIPT
+from maintenance import main as gateway
 from rsinst import update_host as host, update_source as source
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -63,7 +66,8 @@ class UpdateCheck(unittest.TestCase):
         self.config = {'version': 'abc0123', 'schema': 1, 'status': 'installed',
                        'config': {'llm': 'fixture-llm', 'lang': 'ru'}}
         data = {'compose/compose.yaml': json.dumps(self.compose).encode(),
-                'compose/llm/fixture-llm.yaml': b'services: {}\n', 'README.md': b'old'}
+                'compose/llm/fixture-llm.yaml': b'services: {}\n',
+                'installer/ragspark.py': b'print("fixture CLI")\n', 'README.md': b'old'}
         self.files = []
         for name, content in data.items():
             file = self.old / name
@@ -260,11 +264,189 @@ class UpdateCheck(unittest.TestCase):
                 self.assertEqual(self.run_cli(False)[0], 5)
                 self.assertEqual(json.loads((self.state/'accepted.json').read_bytes())['channel']['sequence'], p['sequence'])
 
-    def test_cli_requires_check_and_refuses_apply(self):
-        for argv in (['update'], ['update', '--rollback'], ['update', '--from', '.']):
-            with redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as err:
-                cli.build_parser().parse_args(argv)
-            self.assertEqual(err.exception.code, 2)
+    def test_cli_rejects_incompatible_modes_and_recovery_source(self):
+        with redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as err:
+            cli.build_parser().parse_args(['update', '--check', '--rollback'])
+        self.assertEqual(err.exception.code, 2)
+        with mock.patch.dict(os.environ, {'RAGSPARK_ALLOW_NONROOT': '1'}), redirect_stdout(io.StringIO()):
+            self.assertEqual(cli.main(['update', '--resume', '--from', '.']), 2)
+            self.assertEqual(cli.main(['update', '--from', '.']), 5)
+
+
+    def setup_bootstrap(self):
+        (self.prefix / 'etc/systemd/system').mkdir(parents=True)
+        wrapper = self.prefix / paths.CLI_PATH.lstrip('/')
+        wrapper.parent.mkdir(parents=True)
+        wrapper.write_text(CLI_SCRIPT.format(install_dir=paths.INSTALL_DIR))
+        wrapper.chmod(0o755)
+        self.config['files'] = [str(wrapper)]
+        manifest = self.old / 'manifest.json'
+        manifest.write_bytes(r.canonical(self.config))
+        manifest.chmod(0o600)
+
+        self.rows = []
+        self.unit_loaded = False
+        self.unexpected_prestart = False
+        self.calls = []
+
+        def inspect(args, cwd=None):
+            self.calls.append(args)
+            if args[0] == 'systemctl':
+                status = {'LoadState': 'loaded', 'ActiveState': 'inactive', 'SubState': 'dead'}
+                if self.unit_loaded:
+                    for prop, value in update_bootstrap.jobs()[args[-1]]:
+                        if value:
+                            status[prop] = f'{{ argv[]={update_bootstrap.unit_exec(value)} ; }}'
+                    if self.unexpected_prestart and args[-1] == paths.UNIT_NAME:
+                        status['ExecStartPre'] = '{ argv[]=/usr/bin/false ; }'
+                return ''.join(f'{key}={val}\n' for key, val in status.items()).encode()
+            if 'ps' in args:
+                return json.dumps(self.rows).encode()
+            if '--services' in args:
+                return '\n'.join(self.services).encode()
+            return self.compose_command(args, cwd)
+
+        self.output.side_effect = inspect
+        with mock.patch.dict(os.environ, {'RAGSPARK_ALLOW_NONROOT': '1'}):
+            update_bootstrap.bootstrap(ROOT / 'installer')
+        self.assertTrue((self.state / 'engine/maintenance.py').is_file())
+        self.assertEqual(wrapper.read_text(), update_bootstrap.WRAPPER)
+        override = self.prefix / 'etc/systemd/system/ragspark.service.d/90-ragspark-update.conf'
+        self.assertIn('ExecStartPre=\n', override.read_text())
+        self.assertIn(str(override), json.loads(manifest.read_bytes())['files'])
+
+        def answer(url, timeout):
+            self.assertTrue(url.endswith('/api/v1/system/healthz'))
+            return True
+
+        self.patch(stackmode, 'http_ok', answer)
+        self.rows = [{'Service': name, 'ID': str(i)*64, 'State': 'running', 'Health': 'healthy'}
+                     for i, name in enumerate(self.services, 1)]
+
+    def through_gateway(self, *args):
+        out = io.StringIO()
+        with mock.patch.dict(os.environ, {'RAGSPARK_ALLOW_NONROOT': '1'}), redirect_stdout(out):
+            status = gateway(list(args))
+        return status, out.getvalue()
+
+    def test_signed_gateway_apply_and_rollback_preserve_running_container_ids(self):
+        self.setup_bootstrap()
+        result, msg = self.through_gateway('update', '--from', str(self.bundle), '--yes')
+        self.assertEqual(result, 3, msg)
+        self.assertIn('loaded systemd command differs', msg)
+        self.assertFalse((self.state / txn.TRANSACTION).exists())
+        self.unit_loaded = True
+        self.unexpected_prestart = True
+        result, msg = self.through_gateway('update', '--from', str(self.bundle), '--yes')
+        self.assertEqual(result, 3, msg)
+        self.assertIn('ExecStartPre', msg)
+        self.assertFalse((self.state / txn.TRANSACTION).exists())
+        self.unexpected_prestart = False
+        keep = list(self.rows)
+        old_config = json.loads((self.old / 'manifest.json').read_bytes())
+        result, msg = self.through_gateway('update', '--from', str(self.bundle), '--yes')
+        self.assertEqual(result, 0, msg)
+        self.assertEqual((self.old / 'README.md').read_bytes(), b'new')
+        self.assertEqual((self.old / 'VERSION').read_text(), '0.2.0\n')
+        self.assertEqual(json.loads((self.old / 'manifest.json').read_bytes()), dict(old_config, version='0.2.0'))
+        bundle_release = (self.bundle / 'release.json').read_bytes()
+        self.assertEqual((self.state / 'installed-release.json').read_bytes(), bundle_release)
+        self.assertEqual(self.rows, keep)
+        self.assertTrue(all('up' not in call and 'stop' not in call and 'restart' not in call
+                            for call in self.calls))
+        result, msg = self.through_gateway('update', '--from', str(self.bundle), '--check')
+        self.assertEqual(result, 0, msg)
+        self.assertIn('уже установлен', msg)
+        result, msg = self.through_gateway('update', '--rollback', '--yes')
+        self.assertEqual(result, 0, msg)
+        self.assertEqual((self.old / 'README.md').read_bytes(), b'old')
+        self.assertEqual(json.loads((self.old / 'manifest.json').read_bytes()), old_config)
+        self.assertFalse((self.state / 'installed-release.json').exists())
+        self.assertEqual(self.rows, keep)
+
+    def test_gate_blocks_lifecycle_after_interruption_and_recovers_without_input(self):
+        self.setup_bootstrap()
+        self.unit_loaded = True
+        real_publish = txn.publish_receipt
+
+        def interrupted(root, operation, side, proof, _checkpoint):
+            def crash(checkpoint):
+                if checkpoint == 'target:installed-release.json':
+                    raise SystemExit(99)
+            real_publish(root, operation, side, proof, crash)
+
+        with mock.patch.object(txn, 'publish_receipt', side_effect=interrupted):
+            with self.assertRaises(SystemExit) as aborted:
+                self.through_gateway('update', '--from', str(self.bundle), '--yes')
+            self.assertEqual(aborted.exception.code, 99)
+        self.assertTrue((self.state / 'installed-release.json').exists())
+        self.assertFalse((self.state / 'installed-release.json.sig').exists())
+        for invocation in (('start',), ('backup', '--scheduled'), ('unit-start', '/usr/bin/docker', 'head'),
+                           ('unit-stop', '/usr/bin/docker', 'head'), ('update', '--check')):
+            self.assertEqual(self.through_gateway(*invocation)[0], 7)
+        shutil.rmtree(self.bundle)
+        result, msg = self.through_gateway('update', '--resume')
+        self.assertEqual(result, 0, msg)
+        self.assertEqual((self.old / 'VERSION').read_text(), '0.2.0\n')
+        self.assertTrue((self.state / 'installed-release.json.sig').exists())
+
+    def repack(self, changed):
+        shutil.rmtree(self.bundle / 'payload')
+        with tempfile.TemporaryDirectory(dir=self.prefix) as directory:
+            staging = Path(directory)
+            files = []
+            for record in self.code['files']:
+                name = record['path']
+                origin = self.old / name
+                data = changed.get(name, origin.read_bytes())
+                dest = staging / name
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                dest.write_bytes(data)
+                files.append(file_record(name, data, mode=record['mode']))
+            self.code.update(pack(staging, files, self.bundle))
+        self.sign_release()
+
+    def test_broken_candidate_cli_triggers_verified_rollback(self):
+        self.setup_bootstrap()
+        self.unit_loaded = True
+        self.repack({'installer/ragspark.py': b'def broken(\n'})
+        result, msg = self.through_gateway('update', '--from', str(self.bundle), '--yes')
+        self.assertEqual(result, 6, msg)
+        self.assertEqual((self.old / 'installer/ragspark.py').read_text(), 'print("fixture CLI")\n')
+        self.assertEqual((self.old / 'VERSION').read_text(), 'abc0123\n')
+        self.assertEqual(txn.load_plan(self.state / txn.TRANSACTION)['phase'], 'reverted')
+        self.assertFalse((self.state / 'installed-release.json').exists())
+
+    def test_two_signed_updates_and_rollback_restore_previous_signed_receipt(self):
+        self.setup_bootstrap()
+        self.unit_loaded = True
+        result, msg = self.through_gateway('update', '--from', str(self.bundle), '--yes')
+        self.assertEqual(result, 0, msg)
+        previous = (self.state / 'installed-release.json').read_bytes()
+        self.release['transitions'][0]['source'] = {'version': '0.2.0', 'manifest_sha256': sha(previous)}
+        self.release.update(version='0.3.0', sequence=3)
+        self.repack({'README.md': b'third'})
+        result, msg = self.through_gateway('update', '--from', str(self.bundle), '--yes')
+        self.assertEqual(result, 0, msg)
+        self.assertEqual((self.old / 'README.md').read_bytes(), b'third')
+        self.assertEqual((self.old / 'VERSION').read_text(), '0.3.0\n')
+        result, msg = self.through_gateway('update', '--rollback', '--yes')
+        self.assertEqual(result, 0, msg)
+        self.assertEqual((self.old / 'README.md').read_bytes(), b'new')
+        self.assertEqual((self.old / 'VERSION').read_text(), '0.2.0\n')
+        self.assertEqual((self.state / 'installed-release.json').read_bytes(), previous)
+        self.assertEqual(json.loads((self.state / 'accepted.json').read_bytes())['release']['sequence'], 3)
+
+    def test_shared_lifecycle_lock_can_enter_nested_unit_but_blocks_update(self):
+        self.setup_bootstrap()
+        self.unit_loaded = True
+        with txn.lock(self.state / 'maintenance.lock', exclusive=False):
+            with mock.patch('maintenance.subprocess.run', return_value=mock.Mock(returncode=0)) as run:
+                self.assertEqual(self.through_gateway('unit-start', '/usr/bin/docker', 'head')[0], 0)
+                self.assertEqual(run.call_args_list[0].args[0][-1], 'prestart')
+                self.assertEqual(run.call_args_list[1].args[0][:3], [Path('/usr/bin/docker'), 'compose', 'up'])
+                self.assertTrue(run.call_args_list[1].kwargs['pass_fds'])
+            self.assertEqual(self.through_gateway('update', '--from', str(self.bundle), '--yes')[0], 4)
 
 
 REAL_OUTPUT = host.output

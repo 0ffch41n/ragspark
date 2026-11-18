@@ -1,9 +1,10 @@
 # Update release contract — U1, format 1
 
-**Implementation status.** U2.3 implements `update --check` for a configured
-trust store. Application and recovery are later steps. U3–U4 cover pairing
-and coordinated updates, U5 offline delivery, and U6 the public release.
-The tables below describe the full contract. See [INSTALL.md](INSTALL.md) for
+**Implementation status.** U2.3 provides `update --check`. U2.4 adds signed
+code-only application and recovery for a bootstrapped single installation.
+U2.5 covers service changes. U3–U4 cover pairing and coordinated updates,
+U5 offline delivery, and U6 the public release. The tables below describe the
+full contract. See [INSTALL.md](INSTALL.md) for
 commands available today. A signed package is trusted publisher code with root
 privileges; signing establishes its origin, not its correctness.
 
@@ -339,6 +340,49 @@ Temporary payload files are removed after the check. The accepted release
 sequence stays in `accepted.json` for replay protection. The result describes
 the head only in stack mode. Node readiness and pair updates are covered by
 U3–U4.
+
+### U2.4 — applying a code-only release on a single unit
+
+After one-time preparation and provisioning of the trust files above, use:
+
+```bash
+sudo ragspark update --from /path/to/bundle
+sudo ragspark update --resume
+sudo ragspark update --rollback
+```
+
+`sudo ragspark update` with no bundle uses the configured stable channel.
+Application and explicit rollback prompt for confirmation. `--yes` confirms the
+operation in unattended use. Dependencies must already match the signed profile.
+Changes to services, models, units or data require a separate supported transition.
+
+The administrator prepares the runner during a maintenance window, with the
+RAGSpark stack and its backup/watch timers and jobs stopped. From a reviewed copy
+of the repository, run `sudo python3 installer/bootstrap_update.py --yes`. This
+copies the runner to the private state directory, installs the managed CLI
+entry point, and writes systemd drop-ins. Verify the result before reloading the
+manager. Perform `systemctl daemon-reload` during the maintenance window with
+GPU workloads stopped, then restore the previously enabled timers and start
+the stack. The runner checks that systemd has loaded the expected command paths
+before it can apply an update. Provision an exact legacy inventory for the
+installed revision as described above. Update preparation rejects locally
+modified or group/world-writable code directories.
+
+The runner holds a shared maintenance lock for normal commands and systemd
+jobs. Publication and recovery take the exclusive lock on the same inode.
+An unfinished journal blocks lifecycle commands even after a reboot. Run
+`update --resume` to continue the recorded direction, or `update --rollback`
+to request restoration from the sealed previous files. Start the stack
+normally after recovery if it was stopped. The latest operation is retained
+for explicit rollback. Rollback of a completed update refuses changes to
+the installation manifest made since publication, to protect later resource
+and configuration changes. A rollback leaves the accepted release sequence at
+its high-water mark.
+
+Code publication leaves the active container IDs, data, and model weights in
+place. The runner verifies the installed inventory, starts a fresh CLI help
+process, checks the identities of running Compose containers, and checks
+RAGFlow health when services are up.
 
 [Publisher tools and legacy inventory](../build/release/README.md)
 
