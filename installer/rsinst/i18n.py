@@ -5,6 +5,26 @@ that both texts are filled in and that their {placeholders} match.
 """
 
 MESSAGES = {
+    "up_version": ('Installed {from} → release {to} ({mode}, {llm})', 'Установлено {from} → выпуск {to} ({mode}, {llm})'),
+    "up_stack": ('Stack preview on head only. Node readiness and coordinated application are pending U3–U4.', 'Предварительный план на head. Проверка второго узла и обновление пары появятся в U3–U4.'),
+    "up_current": ('This exact release is installed.', 'Этот выпуск уже установлен.'),
+    "up_source_net": ('Downloaded and verified on head: {size} ({ids})', 'Скачано и проверено на head: {size} ({ids})'),
+    "up_source_local": ('Verified from the local bundle on head: {size} ({ids})', 'Проверено на head из локального каталога: {size} ({ids})'),
+    "up_reuse": ('Verified locally and reused: {ids}', 'Найдены и проверены на узле: {ids}'),
+    "up_space": ('Peak additional disk on {mount}: {needed}, free {free}', 'Пиковое дополнительное место на {mount}: {needed}, свободно {free}'),
+    "up_ram": ('Available host memory during check: {size}', 'Доступная память узла при проверке: {size}'),
+    "up_restart": ('Services to restart on {role}: {services}', 'Сервисы для перезапуска на {role}: {services}'),
+    "up_units": ('Systemd units require GPU-safe maintenance.', 'Для systemd потребуется обслуживание с сохранением доступа к GPU.'),
+    "up_backup_yes": ('Backup required. The transition supports compatible rollback.', 'Нужен бэкап. Переход допускает совместимый откат.'),
+    "up_backup_no": ('Backup optional. The transition supports compatible rollback.', 'Бэкап необязателен. Переход допускает совместимый откат.'),
+    "up_pause_unknown": ('Web/model interruption: not measured.', 'Длительность перерыва веб-панели и модели ещё не измерена.'),
+    "up_pause_zero": ('Web and model downtime: none planned.', 'Веб-панель и модель продолжат работать при таком переходе.'),
+    "up_node": ('Run the pair preview on the head.', 'Запустите проверку пары на головном узле.'),
+    "up_busy": ('Another release check is running.', 'Уже идёт проверка выпуска.'),
+    "up_prepare": ('Cannot prepare the release check: {detail}', 'Не удалось подготовить проверку выпуска: {detail}'),
+    "up_reject": ('Release check rejected: {detail}', 'Проверка выпуска завершилась отказом: {detail}'),
+    "up_format": ('Invalid installation or release configuration.', 'Ошибка формата установки или выпуска.'),
+
     # ------------------------------------------------------------- stack mode: two units (D10)
     "cfg_no_stack_llm": ("No stack-mode LLM in this copy (compose/node/llm/ is empty).",
                          "В этой копии нет LLM для режима stack (compose/node/llm/ пуст)."),

@@ -64,7 +64,8 @@ def compare(root, files, source):
     """Return path-level differences. Matching files alone cannot settle a version conflict."""
     r.source(source)
     actual_baseline = inventory_sha(files)
-    r.need('legacy_commit' in source and actual_baseline == source['inventory_sha256'],
+    if 'legacy_commit' in source:
+        r.need(actual_baseline == source['inventory_sha256'],
            'trusted legacy commit and inventory required')
     expected = {f['path']: f for f in files}
     parents = set()
@@ -116,7 +117,10 @@ def compare(root, files, source):
         os.close(fd)
     for missing in set(expected) - seen:
         differences[missing] = 'missing'
-    version_ok = bool(re.fullmatch('[0-9a-f]{7,40}', installed)) and source['legacy_commit'].startswith(installed)
+    if 'legacy_commit' in source:
+        version_ok = bool(re.fullmatch('[0-9a-f]{7,40}', installed)) and source['legacy_commit'].startswith(installed)
+    else:
+        version_ok = installed == source['version']
     if not version_ok:
         differences['VERSION'] = 'version-mismatch'
     if recorded != installed:

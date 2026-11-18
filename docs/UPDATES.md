@@ -1,9 +1,9 @@
 # Update release contract — U1, format 1
 
-**Status: proposed specification, not an implemented feature.** The commands
-below are not available in the current installer. U2 implements local updates,
-U3–U4 pairing and coordinated updates, U5 offline delivery, U6 public release.
-This document defines their shared contract. See [INSTALL.md](INSTALL.md) for
+**Implementation status.** U2.3 implements `update --check` for a configured
+trust store. Application and recovery are later steps. U3–U4 cover pairing
+and coordinated updates, U5 offline delivery, and U6 the public release.
+The tables below describe the full contract. See [INSTALL.md](INSTALL.md) for
 commands available today. A signed package is trusted publisher code with root
 privileges; signing establishes its origin, not its correctness.
 
@@ -298,6 +298,47 @@ group/world writable; their ancestors must be root/verifier-owned and protected
 (root-owned sticky temporary directories are permitted for isolated tests).
 Checks do not freeze user-writable source files for future use: a later updater
 must own private staging and check the actual bytes it applies.
+
+### U2.3 — checking a release
+
+Both commands require an installed version of the CLI that includes U2.3 and
+administrator-provisioned trust. Use the first command for a configured stable
+channel and the second for a local release directory.
+
+```bash
+sudo ragspark update --check
+sudo ragspark update --check --from /path/to/bundle
+```
+
+The administrator provisions `/var/lib/ragspark-update` as a root-owned directory
+with mode `0700`. Within its `trust/` directory use:
+
+- `allowed_signers` with the independently verified publisher key, and optional
+  `revoked` with the corresponding OpenSSH revocation list.
+- `stable-url` with the HTTPS URL of the signed channel pointer. The signature
+  is served at that URL with `.sig` appended. Local checks skip the channel.
+- `baseline.json` for a legacy installation. Use the full inventory verified
+  for that installation. A signed installation uses `installed-release.json`
+  and `installed-release.json.sig` at the root of the update state directory.
+
+The trust files and their parent directories must be protected from group and
+world writes. A candidate bundle supplies neither the signing key nor the
+baseline. The public stable endpoint and production trust bootstrap are scheduled
+for the public release. Missing setup produces an error.
+
+The check verifies the signed release, compares the installed code inventory,
+checks the head's requirements and effective Compose configuration, and shows
+the proposed restart and backup requirements. Disk use is estimated per
+filesystem and includes staging and space for application. Models may take time
+to hash. Missing artifacts are copied or downloaded into private staging and
+verified, so the check can transfer large files. Image archives are checked
+against the signed length and digest. Import and verification of the imported
+image are later steps.
+
+Temporary payload files are removed after the check. The accepted release
+sequence stays in `accepted.json` for replay protection. The result describes
+the head only in stack mode. Node readiness and pair updates are covered by
+U3–U4.
 
 [Publisher tools and legacy inventory](../build/release/README.md)
 

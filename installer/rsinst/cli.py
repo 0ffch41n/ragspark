@@ -7,7 +7,7 @@ from . import paths, ui
 from .manifest import Manifest
 
 COMMANDS = ["install", "check", "status", "start", "stop", "restart", "logs", "llm", "acceptance", "uninstall", "prestart",
-            "watch", "backup", "restore"]
+            "watch", "backup", "restore", "update"]
 
 
 def _common(suppress):
@@ -80,6 +80,9 @@ def build_parser():
     r = sub.add_parser("restore", parents=[common], help="replace the data with a copy")
     r.add_argument("name", help="a copy from `ragspark backup --list`, or the path of a copy")
     r.add_argument("--dir", help="directory of the copies (default /srv/ragspark/backups)")
+    update = sub.add_parser("update", parents=[common], help="check a signed release and show the update plan")
+    update.add_argument("--check", required=True, action="store_true", help="verify and display the plan")
+    update.add_argument("--from", dest="bundle", metavar="DIRECTORY", help="use a local release directory offline")
     u = sub.add_parser("uninstall", parents=[common], help="remove RAGSpark and all its data")
     u.add_argument("--keep-images", action="store_true", help="keep the Docker images the installer pulled")
     u.add_argument("--keep-models", action="store_true", help="keep the model weights the installer downloaded")
@@ -92,6 +95,13 @@ def main(argv=None):
     if not args.command:
         parser.print_help()
         return 2
+    if args.command == "update":
+        from . import update_check
+        ui.set_lang(args.lang or ui.detect_lang())
+        if os.geteuid() != 0 and os.environ.get("RAGSPARK_ALLOW_NONROOT") != "1":
+            print(ui.t("need_root", cmd="sudo ragspark update --check"), file=sys.stderr)
+            return 5
+        return update_check.update(args)
     manifest = Manifest.load()
     if manifest is not None:
         paths.set_role(manifest.config.get("role", "head"))
