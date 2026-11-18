@@ -12,14 +12,14 @@ import tarfile
 from pathlib import Path
 
 from . import release as r, release_verify as v
-from .sysutil import version_tuple
+from .sysutil import UPDATE_ENV, version_tuple
 from .update_source import PreparationError
 
 
 def output(argv, cwd=None):
     try:
         return subprocess.check_output(argv, cwd=cwd, timeout=60, stderr=subprocess.DEVNULL,
-                                       env={'PATH': '/usr/local/bin:/usr/bin:/bin', 'LC_ALL': 'C'})
+                                       env=UPDATE_ENV)
     except (OSError, subprocess.SubprocessError) as exc:
         raise PreparationError('cannot inspect ' + ' '.join(argv[:2])) from exc
 
@@ -154,7 +154,7 @@ def units(root):
     return result
 
 
-def impact(oldroot, candidate, llm, mode, role, transition, profile, artifacts, changed):
+def impact(oldroot, candidate, llm, mode, role, transition, profile, artifacts, changed, apply=False):
     relative = 'compose/node' if role == 'node' else 'compose'
     installed = oldroot / relative
     new = candidate / relative
@@ -168,6 +168,9 @@ def impact(oldroot, candidate, llm, mode, role, transition, profile, artifacts, 
     selected = [s for s in env.splitlines() if s.startswith(b'COMPOSE_FILE=')]
     r.need(selected == [('COMPOSE_FILE=' + ':'.join(files)).encode()], 'installed Compose selection differs')
     old, target = render(installed, files), render(new, files)
+    if apply and transition['impact'] == 'services':
+        from . import update_services
+        update_services.compatible(old, target, changed, transition['restart'][role], llm)
     old_services, services = old.pop('services'), target.pop('services')
     pins = profile['roles'][role]
     images = {k: canonical_image(s['image']) for k, s in services.items()}

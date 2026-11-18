@@ -77,8 +77,9 @@ def check(root, old, bundle, config, apply=None):
             return dict(plan, same=True)
         transition = r.select_transition(release, current, profile['id'], mode, llm, release['target'], sequence)
         if apply:
-            r.need(mode == 'single' and transition['impact'] == 'code' and transition['backup'] == 'none',
-                   'apply requires a single-mode code-only transition with no data backup requirement')
+            r.need(mode == 'single' and (transition['impact'], transition['backup']) in
+                   (('code', 'none'), ('services', 'required')),
+                   'apply requires a compatible single-node code or service transition')
         r.need(release['sequence'] > sequence, 'release sequence did not advance')
         code = code_artifact(release)
         artifacts = {a['id']: a for a in release['artifacts']}
@@ -107,13 +108,16 @@ def check(root, old, bundle, config, apply=None):
         before = {f['path']: f for f in files}
         after = {f['path']: f for f in code['files']}
         changed = {p for p in before.keys() | after.keys() if before.get(p) != after.get(p)}
-        host.impact(old, candidate, llm, mode, 'head', transition, profile, artifacts, changed)
+        host.impact(old, candidate, llm, mode, 'head', transition, profile, artifacts, changed, apply=bool(apply))
         for a in missing[1:]:
             source.stage_artifact(stage, bundle, a)
         plan = dict(plan, same=False, transition=transition, missing=[a['id'] for a in missing],
                     reused=reused, space=space, size=sum(a['bytes'] for a in missing),
                     online=bundle is None)
         if apply:
+            if transition['impact'] == 'services':
+                plan['images'] = {name: artifacts[ident]['config_digest']
+                                  for name, ident in role['images'].items()}
             target = {'version': identity['version'], 'manifest_sha256': identity['manifest_sha256']}
             return apply(plan, candidate, files, code['files'], current, target, receipt)
         return plan

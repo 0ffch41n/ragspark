@@ -14,6 +14,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from rsinst import cli, paths, release as r, ui, update_apply, update_transaction as txn
 from rsinst.update_source import Busy
+from rsinst.sysutil import retain_update_lock
 
 
 def installed(tree, args, fd, cache):
@@ -68,7 +69,8 @@ def main(argv):
                 ui.status('FAIL', ui.t('up_recover'))
                 return 7
             if update:
-                return update_apply.command(args, gated=True)
+                with retain_update_lock(fd):
+                    return update_apply.command(args, gated=True)
             with tempfile.TemporaryDirectory(prefix='run-', dir=root) as cache:
                 if systemd:
                     return unit(tree, argv, fd, cache)

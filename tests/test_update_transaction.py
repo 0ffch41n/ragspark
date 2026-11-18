@@ -8,6 +8,7 @@ import stat
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -174,6 +175,56 @@ class Transaction(unittest.TestCase):
             self.assertNotEqual(result.returncode, 0)
             self.assertIn('Busy', result.stderr)
         self.assertEqual(txn.load_plan(state / txn.TRANSACTION)['phase'], 'prepared')
+
+    def test_lock_survives_coordinator_crash_while_child_is_mutating(self):
+        state, _ = self.setup_install('child')
+        started, release = self.base / 'child-started', self.base / 'child-release'
+        self.addCleanup(release.touch)
+        child = """
+import sys
+import time
+from pathlib import Path
+started, stop = map(Path, sys.argv[1:])
+started.touch()
+for _ in range(200):
+    if stop.exists():
+        break
+    time.sleep(0.025)
+"""
+        coordinator = """
+import sys
+from pathlib import Path
+from rsinst import sysutil
+from rsinst import update_transaction as txn
+lock, source, started, stop = sys.argv[1:]
+with txn.lock(Path(lock)) as fd, sysutil.retain_update_lock(fd):
+    sysutil.run([sys.executable, '-B', '-c', source, started, stop])
+"""
+        lock = state / 'maintenance.lock'
+        actor = subprocess.Popen([sys.executable, '-B', '-c', coordinator, str(lock), child,
+                                  str(started), str(release)], cwd=self.runner,
+                                 env=dict(os.environ, PYTHONPATH=str(self.runner)),
+                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        try:
+            until = time.monotonic() + 4
+            while not started.exists() and time.monotonic() < until:
+                time.sleep(0.025)
+            self.assertTrue(started.exists())
+        finally:
+            actor.kill()
+            actor.wait(timeout=5)
+        with self.assertRaises(Busy), txn.lock(lock):
+            pass
+        release.touch()
+        until = time.monotonic() + 4
+        while True:
+            try:
+                with txn.lock(lock):
+                    break
+            except Busy:
+                if time.monotonic() >= until:
+                    self.fail('child did not release the update lock')
+                time.sleep(0.025)
 
     def test_corrupt_staging_and_symlink_targets_refuse(self):
         state, tree = self.setup_install('stage')

@@ -5,8 +5,24 @@ import re
 import shutil
 import socket
 import subprocess
+from contextlib import contextmanager
+from contextvars import ContextVar
 
 from . import paths, ui
+
+
+UPDATE_ENV = {'PATH': '/usr/local/bin:/usr/bin:/bin', 'LC_ALL': 'C'}
+_update_fds = ContextVar('update_fds', default=())
+
+
+@contextmanager
+def retain_update_lock(fd):
+    """A child doing maintenance retains the lock if the coordinator dies."""
+    token = _update_fds.set((fd,))
+    try:
+        yield
+    finally:
+        _update_fds.reset(token)
 
 
 def run(cmd, capture=True, cwd=None, env=None, stdin=None, timeout=None, log_output=True):
@@ -16,15 +32,16 @@ def run(cmd, capture=True, cwd=None, env=None, stdin=None, timeout=None, log_out
     log_output=False keeps the output out of the install log (it may hold passwords).
     """
     ui.log("$ " + " ".join(str(c) for c in cmd) + (" (in %s)" % cwd if cwd else ""))
-    full_env = None
+    fds = _update_fds.get()
+    full_env = dict(UPDATE_ENV) if fds else None
     if env:
-        full_env = dict(os.environ)
+        full_env = dict(os.environ) if full_env is None else full_env
         full_env.update(env)
     try:
         if capture:
             p = subprocess.run(cmd, cwd=cwd, env=full_env, stdin=stdin, timeout=timeout,
                                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
-                               errors="replace")
+                               errors="replace", pass_fds=fds)
             out, err = p.stdout or "", p.stderr or ""
             if log_output:
                 if out.strip():
@@ -36,7 +53,7 @@ def run(cmd, capture=True, cwd=None, env=None, stdin=None, timeout=None, log_out
                 return p.returncode, (out + "\n" + err).strip()
             # On success only stdout: warnings on stderr must not be parsed as data.
             return p.returncode, out
-        p = subprocess.run(cmd, cwd=cwd, env=full_env, stdin=stdin, timeout=timeout)
+        p = subprocess.run(cmd, cwd=cwd, env=full_env, stdin=stdin, timeout=timeout, pass_fds=fds)
         ui.log("exit %d" % p.returncode)
         return p.returncode, ""
     except FileNotFoundError:

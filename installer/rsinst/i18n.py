@@ -5,6 +5,13 @@ that both texts are filled in and that their {placeholders} match.
 """
 
 MESSAGES = {
+    "up_service_window": ("RAGFlow and its databases pause for a verified backup. RAGFlow reopens after validation.",
+                          "RAGFlow и его базы остановятся для проверенного бэкапа. Вход откроется после проверки."),
+    "up_confirm_service_apply": ("Start the maintenance window and apply the service update?",
+                                 "Начать окно обслуживания и применить обновление сервиса?"),
+    "up_backup_verified": ("Maintenance backup verified at {path}.", "Бэкап для обновления проверен в {path}."),
+    "up_rollback_after_open": ("RAGFlow has reopened. Reverting requires a new signed maintenance release.",
+                               "Доступ к RAGFlow уже открыт. Для возврата нужен новый подписанный переход."),
     "up_confirm_apply": ("Apply this code-only release?", "Применить это обновление кода?"),
     "up_confirm_rollback": ("Restore the previous code release?", "Восстановить предыдущую версию кода?"),
     "up_applied": ("Code update committed.", "Обновление кода применено."),

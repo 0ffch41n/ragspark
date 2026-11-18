@@ -17,7 +17,7 @@ from unittest import mock
 
 from release_fixtures import NOW, file_record, pointer, sample, sha
 from rsinst import cli, paths, release as r, release_inventory, stackmode, ui, update_check as check
-from rsinst import update_bootstrap, update_transaction as txn
+from rsinst import backup, update_bootstrap, update_services as maintenance, update_transaction as txn
 from rsinst.install import CLI_SCRIPT
 from maintenance import main as gateway
 from rsinst import update_host as host, update_source as source
@@ -449,6 +449,174 @@ class UpdateCheck(unittest.TestCase):
             self.assertEqual(self.through_gateway('update', '--from', str(self.bundle), '--yes')[0], 4)
 
 
+    def configure_service_release(self, mutate=None):
+        """A real signed package and journal with a disposable simulated stack."""
+        for name in (maintenance.WEB, *backup.DATA):
+            self.services[name] = {'image': self.image['image_ref']}
+        self.services[maintenance.WEB].update(
+            ports=[{'target': 80, 'published': '18080'}], restart='on-failure:5',
+            networks={'default': None, 'backend': None})
+        self.compose['networks'] = {'default': {'driver': 'bridge'}, 'backend': {'internal': True}}
+        role = self.release['profiles'][0]['roles']['head']
+        role['images'] = {name: 'image' for name in self.services}
+        raw = json.dumps(self.compose).encode()
+        (self.old / 'compose/compose.yaml').write_bytes(raw)
+        self.files = [file_record('compose/compose.yaml', raw) if rec['path'] == 'compose/compose.yaml' else rec
+                      for rec in self.files]
+        self.current = release_inventory.legacy_baseline('abc0123' + 'e'*33, self.files)
+        (self.trust / 'baseline.json').write_bytes(r.canonical({'source': self.current, 'files': self.files}))
+        self.release['transitions'][0].update(source=self.current, impact='services', backup='required',
+                                               restart={'head': ['vllm-llm']})
+        new = json.loads(raw)
+        new['services']['vllm-llm']['command'] += ['--max-num-seqs', '4']
+        if mutate:
+            mutate(new)
+        self.repack({'compose/compose.yaml': json.dumps(new).encode()})
+        self.setup_bootstrap()
+        self.unit_loaded = True
+        for volume in backup.VOLUMES:
+            (self.prefix / volume).mkdir()
+        self.patch(backup, 'mountpoint', lambda volume: str(self.prefix / volume))
+        self.patch(backup, 'parsing', mock.Mock(return_value=0))
+        self.patch(backup, 'wait_parsing', mock.Mock(return_value=True))
+        self.patch(backup, 'ready', mock.Mock(return_value=True))
+        self.events = []
+
+        def verified(_config):
+            self.assertEqual((self.old / 'VERSION').read_text().strip(), 'abc0123')
+            self.events.append('backup-verified')
+
+        self.patch(backup, 'stop', mock.Mock(side_effect=lambda _data: self.events.append('stop-data')))
+        self.patch(maintenance, 'verified_backup', mock.Mock(side_effect=verified))
+        self.patch(maintenance, 'systemctl', lambda action, name: self.events.append((action, name)))
+        self.compose_actions = self.patch(maintenance, 'run_compose', mock.Mock(side_effect=self.service_compose))
+        inspect = self.output.side_effect
+
+        def simulated(args, cwd=None):
+            if args[0] == 'systemctl' and args[-1].endswith('.timer'):
+                active = 'active' if args[-1] == paths.BACKUP_TIMER else 'inactive'
+                return f'LoadState=loaded\nActiveState={active}\n'.encode()
+            if args[:2] == ['docker', 'inspect']:
+                return b'{}' if 'PortBindings' in args[3] else self.image['config_digest'].encode()
+            if '-q' in args:
+                return b'e' * 64
+            if any(str(v).endswith('/private-web.yaml') for v in args) and 'config' in args:
+                out = json.loads(inspect(args, cwd))
+                out['services']['ragflow'].pop('ports', None)
+                return json.dumps(out).encode()
+            return inspect(args, cwd)
+
+        self.output.side_effect = simulated
+
+    def service_compose(self, tree, config, args, overlay=None, timeout=2400):
+        if args[0] == 'up' and args[-1] == 'ragflow':
+            action = 'create-private' if overlay else 'publish-web'
+            self.events.append(action)
+            if not overlay:
+                self.assertIn(maintenance.status(self.state / txn.TRANSACTION),
+                              ('opening-target', 'opening-previous', 'reopening-source'))
+        elif args[0] == 'up' and args[-1] == 'vllm-llm':
+            self.events.append('up-model')
+        elif args == ['stop', 'ragflow']:
+            self.events.append('close-web')
+        elif args == ['stop', 'vllm-llm']:
+            self.events.append('stop-model')
+        elif args == ['start', 'ragflow']:
+            self.events.append('start-private')
+        elif args[0] == 'exec':
+            self.events.append('verify-' + args[2])
+
+    def apply_service_release(self):
+        return self.through_gateway('update', '--from', str(self.bundle), '--yes')
+
+    def test_service_update_backs_up_before_publication_and_checks_private_web(self):
+        self.configure_service_release()
+        code, out = self.apply_service_release()
+        self.assertEqual(code, 0, out)
+        self.assertEqual(self.events, [('stop', paths.BACKUP_TIMER), 'close-web', 'stop-data',
+                                       'backup-verified', 'close-web', 'stop-model', 'up-model', 'verify-vllm-llm',
+                                       'create-private', 'start-private', 'verify-ragflow', 'publish-web',
+                                       ('start', paths.BACKUP_TIMER)])
+        self.assertTrue((self.state / 'installed-release.json.sig').exists())
+        self.assertFalse(txn.pending(self.state))
+        self.assertEqual(self.through_gateway('update', '--rollback', '--yes')[0], 3)
+
+    def test_service_update_writes_and_verifies_real_backup_archives(self):
+        self.configure_service_release()
+        # Use the real backup writer with small real files and a synthetic
+        # read-only Compose image metadata query.
+        real_backup = VERIFIED_BACKUP
+        for volume in backup.VOLUMES:
+            (self.prefix / volume / 'marker').write_text(volume + '\n')
+        env = self.old / 'compose/.env'
+        with env.open('a') as stream:
+            for key in backup.DATA_ENV:
+                stream.write(f'{key}=fixture\n')
+        self.patch(backup, '_describe', lambda name, _manifest:
+                   {'name': name, 'format': 1, 'release': 'abc0123',
+                    'images': {k: self.image['image_ref'] for k in ('ragflow', *backup.DATA)}})
+        maintenance.verified_backup.side_effect = real_backup
+        code, out = self.apply_service_release()
+        self.assertEqual(code, 0, out)
+        archive, = maintenance.backup_root().glob('ragspark-*-before-update')
+        info = json.loads((archive / 'backup.json').read_text())
+        self.assertIsNone(backup.verify(str(archive), info))
+        for volume in backup.VOLUMES:
+            self.assertEqual((self.prefix / volume / 'marker').read_text(), volume + '\n')
+
+    def test_service_update_rejects_changes_to_data_image_before_stopping(self):
+        self.configure_service_release(lambda cfg: cfg['services']['mysql'].update(image='different'))
+        code, out = self.apply_service_release()
+        self.assertEqual(code, 3, out)
+        self.assertEqual(self.events, [])
+        self.assertFalse((self.state / txn.TRANSACTION).exists())
+
+    def test_cancellation_while_parsing_preserves_running_web(self):
+        self.configure_service_release()
+        backup.wait_parsing.return_value = False
+        code, out = self.apply_service_release()
+        self.assertEqual(code, 6, out)
+        self.assertEqual(self.events, [('stop', paths.BACKUP_TIMER), ('start', paths.BACKUP_TIMER)])
+        self.assertEqual((self.old / 'VERSION').read_text(), 'abc0123\n')
+        self.assertFalse(txn.pending(self.state))
+
+    def test_service_probe_failure_reverts_before_publication(self):
+        self.configure_service_release()
+
+        def fail_model(tree, config, args, overlay=None, timeout=2400):
+            self.service_compose(tree, config, args, overlay, timeout)
+            if args[:3] == ['exec', '-T', 'vllm-llm'] and (tree / 'VERSION').read_text() == '0.2.0\n':
+                raise source.PreparationError('target probe failed')
+
+        self.compose_actions.side_effect = fail_model
+        code, out = self.apply_service_release()
+        self.assertEqual(code, 6, out)
+        self.assertEqual(self.events.count('publish-web'), 1)
+        self.assertEqual(self.events.count('backup-verified'), 1)
+        self.assertEqual((self.old / 'VERSION').read_text(), 'abc0123\n')
+        self.assertFalse(txn.pending(self.state))
+
+    def test_service_opening_failure_disallows_rollback_and_resumes_forward(self):
+        self.configure_service_release()
+
+        def fail_open(tree, config, args, overlay=None, timeout=2400):
+            self.service_compose(tree, config, args, overlay, timeout)
+            if args[0] == 'up' and args[-1] == 'ragflow' and overlay is None:
+                raise source.PreparationError('exposure uncertain')
+
+        self.compose_actions.side_effect = fail_open
+        self.assertEqual(self.apply_service_release()[0], 7)
+        self.assertTrue(txn.pending(self.state))
+        self.assertEqual(maintenance.status(self.state / txn.TRANSACTION), 'opening-target')
+        self.assertEqual(self.through_gateway('update', '--rollback', '--yes')[0], 3)
+        self.compose_actions.side_effect = self.service_compose
+        self.assertEqual(self.through_gateway('update', '--resume')[0], 0)
+        self.assertEqual((self.old / 'VERSION').read_text(), '0.2.0\n')
+        self.assertEqual(self.events.count('backup-verified'), 1)
+        self.assertFalse(txn.pending(self.state))
+
+
+VERIFIED_BACKUP = maintenance.verified_backup
 REAL_OUTPUT = host.output
 
 
@@ -513,3 +681,26 @@ class CatalogCompose(unittest.TestCase):
                     with self.assertRaisesRegex(r.InvalidRelease, 'restart'):
                         host.impact(old, candidate, llm, mode, 'head', transition, profile, artifacts,
                                     {'compose/relay.py'})
+
+    def test_real_compose_scheduler_only_and_private_web_overlay(self):
+        with tempfile.TemporaryDirectory() as directory:
+            old = Path(directory) / 'old'
+            target = Path(directory) / 'target'
+            for tree in (old, target):
+                shutil.copytree(ROOT / 'compose', tree / 'compose')
+                env = tree / 'compose/.env'
+                env.write_bytes((tree / 'compose/env.example').read_bytes())
+            name = 'qwen-3.8-27b-nvfp4'
+            config = {'llm': name}
+            files = ['compose.yaml', 'llm/' + name + '.yaml']
+            source_file = target / 'compose' / files[1]
+            text = source_file.read_text()
+            source_file.write_text(text.replace('      - --max-num-batched-tokens',
+                                                '      - --max-num-seqs\n      - "4"\n      - --max-num-batched-tokens'))
+            existing = host.render(old / 'compose', files)
+            candidate = host.render(target / 'compose', files)
+            self.assertTrue(existing['services']['ragflow']['ports'])
+            maintenance.compatible(existing, candidate, {'compose/' + files[1]}, ['vllm-llm'], name)
+            overlay = Path(directory) / 'private-web.yaml'
+            overlay.write_bytes(maintenance.PRIVATE_WEB)
+            maintenance.prove_private(target, config, overlay)

@@ -2,7 +2,7 @@
 
 **Implementation status.** U2.3 provides `update --check`. U2.4 adds signed
 code-only application and recovery for a bootstrapped single installation.
-U2.5 covers service changes. U3–U4 cover pairing and coordinated updates,
+U2.5 adds the first scheduler-only service transition. U3–U4 cover pairing and coordinated updates,
 U5 offline delivery, and U6 the public release. The tables below describe the
 full contract. See [INSTALL.md](INSTALL.md) for
 commands available today. A signed package is trusted publisher code with root
@@ -383,6 +383,39 @@ Code publication leaves the active container IDs, data, and model weights in
 place. The runner verifies the installed inventory, starts a fresh CLI help
 process, checks the identities of running Compose containers, and checks
 RAGFlow health when services are up.
+
+### U2.5 — first compatible service transition
+
+The first single-node service transition covers the numeric vLLM scheduler
+flags `--max-num-seqs` and `--max-num-batched-tokens` on `vllm-llm`. It
+requires an independent runner provisioned from this revision. A runner
+previously provisioned for U2.4 retains its code-only behavior. Image,
+model, data-service, network and systemd changes require their own tested
+transition. The currently running container image IDs must match the signed
+profile.
+
+The runner fetches and verifies the code before downtime. After confirmation
+it records and pauses active timers, waits for RAGFlow parsing to finish,
+stops the web writer, confirms that parsing is still idle and freezes the data
+volumes for a verified physical backup. It keeps the backup under
+`/srv/ragspark/backups/update-safety` and prints its path. Restoring this
+backup is a separate administrator action.
+
+The runner starts the original data containers and unchanged pooling services.
+It stops the previous LLM before recreating the changed service and runs a
+short generation test. During validation, RAGFlow is created with the port
+removed from Compose. The runner inspects the container's actual port bindings
+before starting it, then verifies its internal HTTP endpoint. RAGFlow is next
+recreated with its normal port. The data containers are stopped and started for
+the backup, and the runner checks that their container IDs still match.
+
+An interruption or error before the durable opening phase can be recovered
+from the journal with `--resume` or `--rollback`. The runner records the
+opening phase before enabling the public port. Once that phase begins, recovery
+proceeds forward because clients may have written new data. A later return to
+the previous service configuration requires its own signed maintenance
+transition. The runner never restores old data automatically. The recorded
+active timers are started only after recovery reaches a terminal state.
 
 [Publisher tools and legacy inventory](../build/release/README.md)
 

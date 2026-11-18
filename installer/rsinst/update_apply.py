@@ -65,17 +65,21 @@ def observe(tree):
     return {row['Service']: row['ID'] for row in rows}
 
 
+def verify_cli(root, tree):
+    # Use an empty bytecode root, including when the legacy tree has caches.
+    with tempfile.TemporaryDirectory(prefix='verify-', dir=root) as cache:
+        args = [sys.executable, '-I', '-B', '-X', 'pycache_prefix=' + cache,
+                str(tree / 'installer/ragspark.py'), '--help']
+        try:
+            subprocess.run(args, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                           stderr=subprocess.DEVNULL, timeout=30, check=True)
+        except (OSError, subprocess.SubprocessError):
+            raise PreparationError('published CLI failed its startup check') from None
+
+
 def verifier(root, expected, after_interruption=False):
     def verify(tree, _side):
-        # Use an empty bytecode root, including when the legacy tree has caches.
-        with tempfile.TemporaryDirectory(prefix='verify-', dir=root) as cache:
-            args = [sys.executable, '-I', '-B', '-X', 'pycache_prefix=' + cache,
-                    str(tree / 'installer/ragspark.py'), '--help']
-            try:
-                subprocess.run(args, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-                               stderr=subprocess.DEVNULL, timeout=30, check=True)
-            except (OSError, subprocess.SubprocessError):
-                raise PreparationError('published CLI failed its startup check') from None
+        verify_cli(root, tree)
         observed = observe(tree)
         # Boot is gated while a journal is open, so a reboot can leave every
         # service down until recovery completes and the administrator starts it.
@@ -86,12 +90,23 @@ def verifier(root, expected, after_interruption=False):
 
 def publish(root, tree, plan, candidate, before, after, previous, target, receipt):
     check.show(plan)
-    if not ui.confirm(ui.t('up_confirm_apply')):
+    service_change = plan['transition']['impact'] == 'services'
+    if service_change:
+        ui.say(ui.t('up_service_window'))
+    question = 'up_confirm_service_apply' if service_change else 'up_confirm_apply'
+    if not ui.confirm(ui.t(question)):
         return 8
     update_bootstrap.ensure_ready()
     expected = observe(tree)
+    service = None
+    if service_change:
+        from . import update_services
+        service = update_services.plan(root, tree, plan['llm'], expected, plan['images'])
     txn.prepare(root, tree, candidate, before, after, previous, target,
-                receipts={'previous': saved_receipt(root), 'target': receipt}, containers=expected)
+                receipts={'previous': saved_receipt(root), 'target': receipt}, containers=expected,
+                service_update=service)
+    if service_change:
+        return complete_service_update(root, tree, rollback=False, publishing=True)
     verify = verifier(root, expected)
     try:
         txn.run(root, tree, verify)
@@ -109,11 +124,81 @@ def publish(root, tree, plan, candidate, before, after, previous, target, receip
     return 0
 
 
+def perform_service_update(root, tree, rollback):
+    from . import update_services as service
+
+    operation = txn.operation_path(root)
+    journal = txn.load_plan(operation)
+    config = journal['service_update']
+    paths.set_role('head')
+    state = service.status(operation)
+    phase = journal['phase']
+    if rollback:
+        r.need(state != 'opening-target' and phase != 'committed',
+               'RAGFlow has reopened; rollback requires a new signed maintenance release')
+    if phase in txn.TERMINAL:
+        service.finish(operation, config)
+        return phase
+    reverting = rollback or phase == 'reverting' or state in ('cancelling', 'reopening-source')
+    side = 'previous' if reverting else 'target'
+    verify_receipt(root, side, journal)
+    if reverting and (phase == 'prepared' or state in ('cancelling', 'reopening-source')):
+        service.cancel_prepublication(tree, operation, journal, config)
+        phase = 'reverted'
+    else:
+        if not reverting:
+            service.quiesce(tree, operation, config)
+
+        def verify(current_tree, selected):
+            verify_cli(root, current_tree)
+            service.verify_start(current_tree, operation, config, selected)
+            after = observe(current_tree)
+            before = journal['containers']
+            untouched = set(before) - {service.WEB, *config['restart']}
+            r.need(all(after.get(name) == before[name] for name in untouched),
+                   'an unaffected container was recreated during maintenance')
+
+        phase = txn.run(root, tree, verify, rollback=reverting)
+    service.finish(operation, config)
+    return phase
+
+
+def complete_service_update(root, tree, rollback, publishing=False):
+    from . import update_services as service
+
+    try:
+        phase = perform_service_update(root, tree, rollback)
+    except (OSError, ValueError, PreparationError, KeyboardInterrupt):
+        state = service.status(txn.operation_path(root))
+        if not publishing or state in ('opening-target', 'finished'):
+            ui.status('FAIL', ui.t('up_recover'))
+            return 7
+        try:
+            perform_service_update(root, tree, rollback=True)
+        except (OSError, ValueError, PreparationError, KeyboardInterrupt):
+            ui.status('FAIL', ui.t('up_recover'))
+            return 7
+        ui.status('FAIL', ui.t('up_restored'))
+        return 6
+    ui.status('OK', ui.t('up_done_phase', phase=phase))
+    return 0
+
+
 def recover(root, tree, rollback):
     operation = txn.operation_path(root)
     r.need(os.path.lexists(operation), 'no saved update operation')
     plan = txn.load_plan(operation)
     phase = plan['phase']
+    if 'service_update' in plan:
+        from . import update_services
+        state = update_services.status(operation)
+        if rollback and (state == 'opening-target' or phase == 'committed'):
+            ui.status('FAIL', ui.t('up_rollback_after_open'))
+            return 3
+        if rollback and phase != 'reverted' and not ui.confirm(ui.t('up_confirm_rollback')):
+            return 8
+        update_bootstrap.ensure_ready()
+        return complete_service_update(root, tree, rollback)
     if phase == 'reverted' or phase == 'committed' and not rollback:
         ui.status('OK', ui.t('up_done_phase', phase=phase))
         return 0

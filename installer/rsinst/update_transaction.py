@@ -136,10 +136,19 @@ def operation_path(root):
 
 def pending(root):
     operation = operation_path(root)
-    return os.path.lexists(operation) and load_plan(operation)['phase'] not in TERMINAL
+    if not os.path.lexists(operation):
+        return False
+    plan = load_plan(operation)
+    if plan['phase'] not in TERMINAL:
+        return True
+    if 'service_update' in plan:
+        from . import update_services
+        return update_services.status(operation) != 'finished'
+    return False
 
 
-def prepare(root, tree, staged, before, after, current, target, receipts=None, containers=None):
+def prepare(root, tree, staged, before, after, current, target, receipts=None, containers=None,
+            service_update=None):
     """Seal previous and candidate bytes before publishing the prepared phase.
 
     Caller owns the external lock and has verified the signed transition. Keeps a
@@ -173,6 +182,8 @@ def prepare(root, tree, staged, before, after, current, target, receipts=None, c
                        'manifest.json': r.canonical(next_manifest)}
         plan = {'schema': SCHEMA, 'phase': 'prepared',
                 'previous_source': current, 'target_source': target, 'containers': containers}
+        if service_update is not None:
+            plan['service_update'] = service_update
         for side, base, files, marks in [('previous', tree, before, previous_meta),
                                          ('target', staged, after, target_meta)]:
             snapshot = pending_dir / side
@@ -220,7 +231,12 @@ def load_plan(operation):
     # journal is written by the recovery runner, not supplied by an archive.
     plan = r.parse(v.bounded_read(operation / 'journal.json', 2 * r.MAX_MANIFEST + 4096,
                                   trusted=True), limit=2 * r.MAX_MANIFEST + 4096)
-    r.fields(plan, 'schema phase previous_source target_source previous target containers')
+    fields = 'schema phase previous_source target_source previous target containers'
+    if isinstance(plan, dict) and 'service_update' in plan:
+        from . import update_services
+        update_services.validate_config(plan['service_update'])
+        fields += ' service_update'
+    r.fields(plan, fields)
     containers = plan['containers']
     if containers is not None:
         r.need(isinstance(containers, dict) and len(containers) <= 1000, 'invalid saved container identities')
