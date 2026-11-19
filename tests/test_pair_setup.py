@@ -148,6 +148,36 @@ class PairSetup(unittest.TestCase):
             pair.managed_account(self.base)
         self.assertEqual(pair.read_json(self.base / 'account.json'), {'uid': 411})
 
+    def test_valid_enrollment_prompts_show_fingerprints_in_both_languages(self):
+        expected = {'pair': BINDING, 'version': 'e09da62', 'unit_state': 'active'}
+        manifest = Manifest({'status': 'installed', 'config': {}})
+        (self.base / 'pending').mkdir()
+        for lang in ('en', 'ru'):
+            with (
+                self.subTest(lang=lang),
+                patch.object(pair, 'endpoints', return_value=LOCAL),
+                patch.object(pair, 'read_key', return_value=OTHER_KEY),
+                patch.object(ui, 'confirm', return_value=True) as confirm,
+                patch.object(pair, 'authorize_node') as authorize,
+                patch.object(pair, 'finish_head', return_value=expected) as finish,
+            ):
+                ui.set_lang(lang)
+                invitation = pair.token('RSI', OFFER)
+                with patch.object(sys, 'stdin', io.StringIO(invitation + '\n')), \
+                        redirect_stdout(io.StringIO()) as output:
+                    self.assertEqual(pair.enroll(self.base, 'node', 'accept', manifest), 0)
+                self.assertIn(pair.fingerprint(KEY), confirm.call_args.args[0])
+                authorize.assert_called_once_with(self.base, OFFER)
+                receipt = pair.record(BINDING, OTHER_KEY)
+                self.assertIn(pair.fingerprint(OTHER_KEY), output.getvalue())
+                self.assertIn(pair.token('RSR', receipt), output.getvalue().splitlines())
+                with patch.object(sys, 'stdin', io.StringIO(pair.token('RSR', receipt) + '\n')), \
+                        redirect_stdout(io.StringIO()) as output:
+                    self.assertEqual(pair.enroll(self.base, 'head', 'finish', manifest), 0)
+                self.assertIn(pair.fingerprint(OTHER_KEY), confirm.call_args.args[0])
+                finish.assert_called_once_with(self.base, receipt)
+                self.assertIn('e09da62', output.getvalue())
+
     def test_accept_checks_role_and_addresses_before_publishing_a_key(self):
         args = cli.build_parser().parse_args(['pair', 'accept'])
         config = dict(LOCAL, llm='deepseek-v4-flash-vision', role='head')

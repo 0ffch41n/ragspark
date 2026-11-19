@@ -305,10 +305,10 @@ def enroll(base, role, action, manifest):
         require_endpoints(offer['pair'], local)
         host_key = read_key(Path(paths.host(HOST_KEY)))
         if not ui.confirm(ui.t('pair_accept_confirm', head=local['head_ip'],
-                              key=fingerprint(offer['key']))):
+                              fingerprint=fingerprint(offer['key']))):
             return 1
         authorize_node(base, offer)
-        ui.say(ui.t('pair_confirmation_hint', key=fingerprint(host_key)))
+        ui.say(ui.t('pair_confirmation_hint', fingerprint=fingerprint(host_key)))
         print(token('RSR', record(offer['pair'], host_key)), flush=True)
     else:
         if os.path.lexists(base / 'head'):
@@ -317,7 +317,7 @@ def enroll(base, role, action, manifest):
         r.need(os.path.lexists(base / 'pending'), 'start pairing with sudo ragspark pair')
         receipt = read_token('RSR', ui.t('pair_confirmation_prompt'))
         require_endpoints(receipt['pair'], local)
-        if not ui.confirm(ui.t('pair_finish_confirm', key=fingerprint(receipt['key']))):
+        if not ui.confirm(ui.t('pair_finish_confirm', fingerprint=fingerprint(receipt['key']))):
             return 1
         show_head_status(finish_head(base, receipt))
     return 0
