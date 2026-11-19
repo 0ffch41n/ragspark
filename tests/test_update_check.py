@@ -395,7 +395,7 @@ class UpdateCheck(unittest.TestCase):
             self.assertEqual(cli.main(['update', '--from', '.']), 5)
 
 
-    def setup_bootstrap(self):
+    def setup_bootstrap(self, role='head'):
         (self.prefix / 'etc/systemd/system').mkdir(parents=True)
         wrapper = self.prefix / paths.CLI_PATH.lstrip('/')
         wrapper.parent.mkdir(parents=True)
@@ -416,7 +416,7 @@ class UpdateCheck(unittest.TestCase):
             if args[0] == 'systemctl':
                 status = {'LoadState': 'loaded', 'ActiveState': 'inactive', 'SubState': 'dead'}
                 if self.unit_loaded:
-                    for prop, value in update_bootstrap.jobs()[args[-1]]:
+                    for prop, value in update_bootstrap.jobs(role)[args[-1]]:
                         if value:
                             status[prop] = f'{{ argv[]={update_bootstrap.unit_exec(value)} ; }}'
                     if self.unexpected_prestart and args[-1] == paths.UNIT_NAME:
@@ -444,6 +444,36 @@ class UpdateCheck(unittest.TestCase):
         self.patch(stackmode, 'http_ok', answer)
         self.rows = [{'Service': name, 'ID': str(i)*64, 'State': 'running', 'Health': 'healthy'}
                      for i, name in enumerate(self.services, 1)]
+
+    def assert_stack_runner(self, role, relative):
+        self.configure_stack_release()
+        self.config['config']['role'] = role
+        self.setup_bootstrap(role)
+        directory = self.old / relative
+        self.output.assert_any_call(['docker', 'compose', 'ps', '--all', '--format', 'json'], cwd=directory)
+
+        drop_in = self.prefix / 'etc/systemd/system/ragspark.service.d/90-ragspark-update.conf'
+        content = drop_in.read_text()
+        for action in ('start', 'stop'):
+            self.assertIn(f'unit-{action} /usr/bin/docker {role}\n', content)
+        self.unit_loaded = True
+        update_bootstrap.ensure_ready(role)
+        other = 'head' if role == 'node' else 'node'
+        with self.assertRaisesRegex(r.InvalidRelease, 'loaded systemd command differs'):
+            update_bootstrap.ensure_ready(other)
+
+        with mock.patch('maintenance.subprocess.run', return_value=mock.Mock(returncode=0)) as run:
+            status, msg = self.through_gateway('unit-start', '/usr/bin/docker', role)
+            self.assertEqual(status, 0, msg)
+            run.assert_called()
+            self.assertEqual(run.call_args.kwargs['cwd'], directory)
+            self.assertEqual(run.call_args.args[0][:3], [Path('/usr/bin/docker'), 'compose', 'up'])
+
+    def test_bootstrap_stack_head(self):
+        self.assert_stack_runner('head', 'compose')
+
+    def test_bootstrap_stack_node(self):
+        self.assert_stack_runner('node', 'compose/node')
 
     def through_gateway(self, *args):
         out = io.StringIO()

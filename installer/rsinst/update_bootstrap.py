@@ -100,15 +100,14 @@ def bootstrap(installer):
     manifest = Manifest.load()
     r.need(manifest is not None and manifest.status == 'installed', 'installation is not ready')
     from .install import CLI_SCRIPT
-    llm = r.string(manifest.config.get('llm'), r'[a-z0-9][a-z0-9.-]{0,79}')
-    r.need(manifest.config.get('role', 'head') == 'head'
-           and not (tree / 'compose/node/llm' / (llm + '.yaml')).is_file(), 'bootstrap is single-mode only')
+    _, _, role = host.local_profile(tree, manifest.config)
+    unit_jobs = jobs(role)
     root.mkdir(mode=0o700, exist_ok=True)
     txn.secure_directory(root)
     r.need((root.stat().st_mode & 0o777) == 0o700, 'update directory must be 0700')
     with txn.lock(root / 'maintenance.lock'):
         r.need(not txn.pending(root), 'a saved update requires recovery')
-        for name in jobs():
+        for name in unit_jobs:
             status = unit_state(name, ('LoadState', 'ActiveState'))
             r.need(status.get('LoadState') in ('loaded', 'not-found')
                    and status.get('ActiveState') in ('inactive', 'failed'), 'stop systemd service first: ' + name)
@@ -120,7 +119,7 @@ def bootstrap(installer):
         r.need(old in (WRAPPER.encode(), legacy) and str(wrapper) in manifest.data['files'],
                'the installed launcher differs from the managed RAGSpark launcher')
         publish_engine(root, installer)
-        for name, edits in jobs().items():
+        for name, edits in unit_jobs.items():
             target = Path(paths.host('/etc/systemd/system/' + name + '.d/90-ragspark-update.conf'))
             data = unit_config(edits).encode()
             if os.path.lexists(target):
