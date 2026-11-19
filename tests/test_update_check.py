@@ -198,7 +198,129 @@ class UpdateCheck(unittest.TestCase):
                 pass
         self.config['config']['role'] = 'node'
         (self.old / 'manifest.json').write_bytes(r.canonical(self.config))
-        self.assertIn('головном', self.run_cli()[1])
+        self.assertIn('node role requires an installed stack model', self.run_cli()[1])
+
+    def configure_stack_release(self):
+        rank = {'image': self.image['image_ref'], 'command': self.services['vllm-llm']['command']}
+        embedding = dict(self.model, id='embed', path='payload/models/embed.tar',
+                         repo='fixture/embedding', revision='1' * 40)
+        rerank = dict(self.model, id='rerank', path='payload/models/rerank.tar',
+                      repo='fixture/rerank', revision='2' * 40)
+        self.release['artifacts'] += [embedding, rerank]
+        head = {stackmode.RANK: rank, 'ragflow': {'image': self.image['image_ref']}}
+        node = {stackmode.RANK: rank}
+        for service, model in [('vllm-embed', embedding), ('vllm-rerank', rerank)]:
+            node[service] = {'image': self.image['image_ref'], 'command': [
+                'vllm', 'serve', model['repo'], '--revision', model['revision']]}
+        profile = self.release['profiles'][0]
+        profile.update(mode='stack', id='fixture-stack')
+        requirements = profile['roles']['head']['requirements']
+        profile['roles'] = {
+            'head': {'requirements': requirements, 'images': dict.fromkeys(head, 'image'),
+                     'models': {'llm': 'weights'}},
+            'node': {'requirements': dict(requirements, min_total_ram_bytes=111 << 30),
+                     'images': dict.fromkeys(node, 'image'),
+                     'models': {'llm': 'weights', 'embedding': 'embed', 'rerank': 'rerank'}},
+        }
+        data = {
+            'compose/compose.yaml': json.dumps({'services': head}).encode(),
+            'compose/stack.yaml': b'services: {}\n',
+            'compose/node/compose.yaml': json.dumps({'services': node}).encode(),
+            'compose/node/llm/fixture-llm.yaml': b'services: {}\n',
+        }
+        for name, raw in data.items():
+            dest = self.old / name
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_bytes(raw)
+            dest.chmod(0o644)
+        self.files = [f for f in self.files if f['path'] not in data]
+        self.files += [file_record(name, raw) for name, raw in data.items()]
+        self.current = release_inventory.legacy_baseline('abc0123' + 'e' * 33, self.files)
+        (self.trust / 'baseline.json').write_bytes(r.canonical({'source': self.current, 'files': self.files}))
+        self.release['transitions'][0].update(source=self.current, profile='fixture-stack',
+                                               restart={'head': [], 'node': []})
+        self.code['files'] = self.files
+        self.repack({'README.md': b'new'})
+        (self.old / 'compose/.env').write_text('COMPOSE_FILE=compose.yaml:stack.yaml:llm/fixture-llm.yaml\n')
+        (self.old / 'compose/node/.env').write_text('COMPOSE_FILE=compose.yaml:llm/fixture-llm.yaml\n')
+        self.config['config'].update(head_ip='192.0.2.10', node_ip='192.0.2.11', http_port=18080)
+        self.expected_services = {'compose': head, 'node': node}
+        self.rows = {directory: [
+            {'ID': str(index) * 64, 'Service': service, 'State': 'running',
+             'Health': '' if directory == 'node' and service == stackmode.RANK else 'healthy'}
+            for index, service in enumerate(services, 1)
+        ] for directory, services in self.expected_services.items()}
+        self.health = self.patch(stackmode, 'http_ok', mock.Mock(return_value=True))
+
+        def inspect(args, cwd):
+            if 'ps' in args:
+                self.assertIn('--all', args)
+                return json.dumps(self.rows[cwd.name]).encode()
+            if '--services' in args:
+                return '\n'.join(self.expected_services[cwd.name]).encode()
+            return self.compose_command(args, cwd)
+
+        self.output.side_effect = inspect
+
+    def test_stack_check_uses_only_local_role_dependencies_and_endpoints(self):
+        self.configure_stack_release()
+        roles = self.release['profiles'][0]['roles']
+        for role, directory, models, urls in [
+            ('head', 'compose', ['weights'],
+             ['http://127.0.0.1:18080/api/v1/system/healthz', 'http://192.0.2.10:8000/health']),
+            ('node', 'node', ['embed', 'rerank', 'weights'],
+             ['http://192.0.2.11:8001/health', 'http://192.0.2.11:8002/health']),
+        ]:
+            with self.subTest(role=role):
+                host.installed_model.reset_mock()
+                self.health.reset_mock()
+                self.config['config']['role'] = role
+                (self.old / 'manifest.json').write_bytes(r.canonical(self.config))
+                status, msg = self.run_cli(lang='en')
+                self.assertEqual(status, 0, msg)
+                self.assertIn('local role ' + role, msg)
+                self.assertIn('Local services ready: ' + ', '.join(sorted(self.expected_services[directory])), msg)
+                host.hardware.assert_called_with(roles[role]['requirements'])
+                self.assertEqual([call.args[1]['id'] for call in host.installed_model.call_args_list], models)
+                self.assertEqual([call.args[0] for call in self.health.call_args_list], urls)
+        self.config['config']['role'] = 'head'
+        (self.old / 'manifest.json').write_bytes(r.canonical(self.config))
+        self.health.side_effect = lambda url, timeout: not url.endswith(':8000/health')
+        self.assertIn('DeepSeek health check failed', self.run_cli(lang='en')[1])
+        self.assertEqual((self.old / 'VERSION').read_text(), 'abc0123\n')
+        self.assertFalse((self.state / txn.TRANSACTION).exists())
+
+    def test_stack_check_rejects_missing_node_dependency_or_unready_node(self):
+        self.configure_stack_release()
+        self.config['config']['role'] = 'node'
+        (self.old / 'manifest.json').write_bytes(r.canonical(self.config))
+        host.installed_model.side_effect = lambda _cache, model: model['id'] != 'rerank'
+        with mock.patch.object(source, 'stage_artifact') as stage:
+            status, msg = self.run_cli(lang='en')
+            self.assertEqual(status, 3, msg)
+            self.assertIn('locally verified dependencies: rerank', msg)
+            stage.assert_not_called()
+        self.health.side_effect = lambda url, timeout: not url.endswith(':8002/health')
+        host.installed_model.side_effect = None
+        status, msg = self.run_cli(lang='en')
+        self.assertEqual(status, 3, msg)
+        self.assertIn('node model health check failed: rerank', msg)
+        self.rows['node'] = [row for row in self.rows['node'] if row['Service'] != stackmode.RANK]
+        self.assertIn('stack is not ready', self.run_cli(lang='en')[1])
+
+    def test_stack_check_rejects_node_compose_changes_and_stack_apply(self):
+        self.configure_stack_release()
+        self.config['config']['role'] = 'node'
+        (self.old / 'manifest.json').write_bytes(r.canonical(self.config))
+        compose = json.loads((self.old / 'compose/node/compose.yaml').read_bytes())
+        compose['services']['vllm-embed']['command'] += ['--max-num-seqs', '4']
+        self.repack({'compose/node/compose.yaml': json.dumps(compose).encode()})
+        self.assertIn('service restart missing', self.run_cli(lang='en')[1])
+        apply = mock.Mock()
+        self.config['config']['role'] = 'head'
+        with self.assertRaisesRegex(r.InvalidRelease, 'single-node'):
+            check.check(self.state, self.old, self.bundle, self.config['config'], apply)
+        apply.assert_not_called()
 
     def test_undeclared_service_unit_or_model_changes(self):
         def changed(args, cwd):
@@ -659,28 +781,26 @@ class CatalogCompose(unittest.TestCase):
                 shutil.copytree(ROOT / 'compose', root / 'compose')
                 shutil.copytree(ROOT / 'catalog', root / 'catalog')
             for mode, llm in [('single', 'qwen-3.8-27b-nvfp4'), ('stack', 'deepseek-v4-flash-vision')]:
-                head_llm = profiles.resolve(candidate, llm, mode)['head']
-                artifacts = {}
-                role = {'images': {}, 'models': {}}
-                for name, ref in head_llm['images'].items():
-                    role['images'][name] = name
-                    artifacts[name] = {'image_ref': ref}
-                for name, rec in head_llm['models'].items():
-                    role['models'][name] = name
-                    artifacts[name] = rec
                 env = (old / 'compose/env.example').read_text()
-                files = 'compose.yaml:' + ('stack.yaml:' if mode == 'stack' else '') + 'llm/' + llm + '.yaml'
                 import re
-                env = re.sub('^COMPOSE_FILE=.*$', 'COMPOSE_FILE=' + files, env, flags=re.M)
-                (old / 'compose/.env').write_text(env)
-                transition = {'impact': 'code', 'restart': {'head': []}}
-                profile = {'roles': {'head': role}}
-                host.impact(old, candidate, llm, mode, 'head', transition, profile, artifacts, set())
-                (candidate / 'compose/.env').unlink()
-                if mode == 'stack':
-                    with self.assertRaisesRegex(r.InvalidRelease, 'restart'):
-                        host.impact(old, candidate, llm, mode, 'head', transition, profile, artifacts,
-                                    {'compose/relay.py'})
+                for name, resolved in profiles.resolve(candidate, llm, mode).items():
+                    with self.subTest(mode=mode, role=name):
+                        artifacts = {svc: {'image_ref': ref} for svc, ref in resolved['images'].items()}
+                        artifacts.update(resolved['models'])
+                        pins = {field: {key: key for key in resolved[field]}
+                                for field in ('images', 'models')}
+                        directory = Path('compose/node' if name == 'node' else 'compose')
+                        files = stackmode.compose_file(llm, name)
+                        (old / directory / '.env').write_text(
+                            re.sub('^COMPOSE_FILE=.*$', 'COMPOSE_FILE=' + files, env, flags=re.M))
+                        transition = {'impact': 'code', 'restart': {name: []}}
+                        profile = {'roles': {name: pins}}
+                        host.impact(old, candidate, llm, mode, name, transition, profile, artifacts, set())
+                        (candidate / directory / '.env').unlink()
+                        if mode == 'stack' and name == 'head':
+                            with self.assertRaisesRegex(r.InvalidRelease, 'restart'):
+                                host.impact(old, candidate, llm, mode, name, transition,
+                                            profile, artifacts, {'compose/relay.py'})
 
     def test_real_compose_scheduler_only_and_private_web_overlay(self):
         with tempfile.TemporaryDirectory() as directory:

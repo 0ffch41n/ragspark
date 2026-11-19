@@ -36,7 +36,7 @@ def installed(root, old, key, revoked):
     return current, files, sequence
 
 
-def disk_plan(stage, old, models_dir, code, files, missing, transition, journal=0):
+def disk_plan(stage, old, models_dir, code, files, missing, transition, role, journal=0):
     space = host.Space()
     space.add(stage, code['expanded_bytes'] + sum(a['bytes'] for a in missing) + journal)
     space.add(old, code['expanded_bytes'] + sum(rec['bytes'] for rec in files))
@@ -46,7 +46,7 @@ def disk_plan(stage, old, models_dir, code, files, missing, transition, journal=
         r.need(store.is_absolute() and store.is_dir(), 'unknown Docker storage path')
         space.add(store, images)
     space.add(models_dir, sum(a['expanded_bytes'] for a in missing if a['kind'] == 'model'))
-    if transition['backup'] == 'required':
+    if role == 'head' and transition['backup'] == 'required':
         size = 1 << 30  # same margin as the backup command
         for volume in backup.VOLUMES:
             mount = backup.mountpoint(volume)
@@ -58,8 +58,7 @@ def disk_plan(stage, old, models_dir, code, files, missing, transition, journal=
 
 
 def check(root, old, bundle, config, apply=None):
-    llm = r.string(config.get('llm'), r'[a-z0-9][a-z0-9.-]{0,79}')
-    mode = 'stack' if (old / 'compose/node/llm' / (llm + '.yaml')).is_file() else 'single'
+    llm, mode, role = host.local_profile(old, config)
     models_dir = Path(config.get('models_dir', paths.DEFAULT_MODELS_DIR))
     r.need(models_dir.is_absolute(), 'invalid model cache path')
     models_dir = Path(paths.host(str(models_dir)))
@@ -69,9 +68,10 @@ def check(root, old, bundle, config, apply=None):
         profiles = [p for p in release['profiles'] if p['mode'] == mode and p['llm'] == llm]
         r.need(len(profiles) == 1, 'no unique profile matching the installed model and mode')
         profile = profiles[0]
-        available = host.hardware(profile['roles']['head']['requirements'])
+        pins = profile['roles'][role]
+        available = host.hardware(pins['requirements'])
         plan = {'from': current.get('version') or current['legacy_commit'][:7], 'to': release['version'],
-                'mode': mode, 'llm': llm, 'available_ram': available}
+                'mode': mode, 'llm': llm, 'role': role, 'available_ram': available}
         if current.get('version') == release['version']:
             r.need(current['manifest_sha256'] == identity['manifest_sha256'], 'installed release version reused')
             return dict(plan, same=True)
@@ -81,10 +81,10 @@ def check(root, old, bundle, config, apply=None):
                    (('code', 'none'), ('services', 'required')),
                    'apply requires a compatible single-node code or service transition')
         r.need(release['sequence'] > sequence, 'release sequence did not advance')
+        stack_code = mode == 'stack' and transition['impact'] == 'code'
         code = code_artifact(release)
         artifacts = {a['id']: a for a in release['artifacts']}
-        role = profile['roles']['head']
-        required = sorted(set(role['images'].values()) | set(role['models'].values()))
+        required = sorted(set(pins['images'].values()) | set(pins['models'].values()))
         missing, reused = [code], []
         for ident in required:
             a = artifacts[ident]
@@ -96,11 +96,14 @@ def check(root, old, bundle, config, apply=None):
                 missing.append(a)
         if apply:
             r.need(len(missing) == 1, 'apply requires all dependencies already installed')
+        if stack_code:
+            r.need(len(missing) == 1, 'stack code update requires locally verified dependencies: ' +
+                   ', '.join(a['id'] for a in missing[1:]))
         journal = 0
-        if apply:
+        if apply or stack_code:
             journal = (code['expanded_bytes'] + sum(rec['bytes'] for rec in files)
                        + len(receipt[0]) * 2 + 2 * r.MAX_MANIFEST + 8 * (1 << 20))
-        space = disk_plan(stage, old, models_dir, code, files, missing, transition, journal)
+        space = disk_plan(stage, old, models_dir, code, files, missing, transition, role, journal)
         archive = source.stage_artifact(stage, bundle, code)
         candidate = stage / 'candidate'
         candidate.mkdir(mode=0o700)
@@ -108,7 +111,10 @@ def check(root, old, bundle, config, apply=None):
         before = {f['path']: f for f in files}
         after = {f['path']: f for f in code['files']}
         changed = {p for p in before.keys() | after.keys() if before.get(p) != after.get(p)}
-        host.impact(old, candidate, llm, mode, 'head', transition, profile, artifacts, changed, apply=bool(apply))
+        host.impact(old, candidate, llm, mode, role, transition, profile, artifacts, changed, apply=bool(apply))
+        if stack_code:
+            plan['containers'] = host.observe(old, config, mode, role)
+            r.need(bool(plan['containers']), 'code update requires a running stack on this node')
         for a in missing[1:]:
             source.stage_artifact(stage, bundle, a)
         plan = dict(plan, same=False, transition=transition, missing=[a['id'] for a in missing],
@@ -117,7 +123,7 @@ def check(root, old, bundle, config, apply=None):
         if apply:
             if transition['impact'] == 'services':
                 plan['images'] = {name: artifacts[ident]['config_digest']
-                                  for name, ident in role['images'].items()}
+                                  for name, ident in pins['images'].items()}
             target = {'version': identity['version'], 'manifest_sha256': identity['manifest_sha256']}
             return apply(plan, candidate, files, code['files'], current, target, receipt)
         return plan
@@ -126,7 +132,7 @@ def check(root, old, bundle, config, apply=None):
 def show(plan):
     ui.say(ui.t('up_version', **plan))
     if plan['mode'] == 'stack':
-        ui.say(ui.t('up_stack'))
+        ui.say(ui.t('up_stack', role=plan['role']))
     if plan['same']:
         ui.say(ui.t('up_current'))
         return
@@ -138,6 +144,8 @@ def show(plan):
     for mount, needed, free in plan['space']:
         ui.say(ui.t('up_space', mount=mount, needed=backup.human(needed), free=backup.human(free)))
     ui.say(ui.t('up_ram', size=backup.human(plan['available_ram'])))
+    if 'containers' in plan:
+        ui.say(ui.t('up_ready', services=', '.join(sorted(plan['containers']))))
     for role, services in t['restart'].items():
         ui.say(ui.t('up_restart', role=role, services=', '.join(services) or '—'))
     if t['impact'] == 'systemd':
@@ -156,7 +164,7 @@ def update(args, apply=None):
         config = state['config']
         if not args.lang and config.get('lang') in ('ru', 'en'):
             ui.set_lang(config['lang'])
-        if r.choice(config.get('role', 'head'), ('head', 'node')) == 'node':
+        if apply and config.get('role', 'head') == 'node':
             ui.say(ui.t('up_node'))
             return 3
         bundle = Path(args.bundle).absolute() if args.bundle is not None else None

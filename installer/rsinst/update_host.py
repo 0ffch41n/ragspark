@@ -11,7 +11,7 @@ import sys
 import tarfile
 from pathlib import Path
 
-from . import release as r, release_verify as v
+from . import paths, release as r, release_verify as v, stackmode
 from .sysutil import UPDATE_ENV, version_tuple
 from .update_source import PreparationError
 
@@ -22,6 +22,45 @@ def output(argv, cwd=None):
                                        env=UPDATE_ENV)
     except (OSError, subprocess.SubprocessError) as exc:
         raise PreparationError('cannot inspect ' + ' '.join(argv[:2])) from exc
+
+
+def local_profile(tree, config):
+    llm = r.string(config.get('llm'), r'[a-z0-9][a-z0-9.-]{0,79}')
+    role = r.choice(config.get('role', 'head'), paths.ROLES)
+    mode = 'stack' if (tree / 'compose/node/llm' / (llm + '.yaml')).is_file() else 'single'
+    r.need(role == 'head' or mode == 'stack', 'node role requires an installed stack model')
+    return llm, mode, role
+
+
+def observe(tree, config, mode, role):
+    """Record container identities and verify the endpoints of the local role."""
+    directory = tree / ('compose/node' if role == 'node' else 'compose')
+    raw = output(['docker', 'compose', 'ps', '--all', '--format', 'json'], cwd=directory)
+    try:
+        rows = json.loads(raw) if raw.strip() else []
+    except json.JSONDecodeError:
+        rows = [json.loads(line) for line in raw.splitlines() if line.strip()]
+    if isinstance(rows, dict):
+        rows = [rows]
+    if not any(row['State'] == 'running' for row in rows):
+        r.need(all(row['State'] in ('exited', 'created') for row in rows), 'stack is changing state')
+        return {}
+    declared = set(output(['docker', 'compose', 'config', '--services'], cwd=directory).decode().split())
+    r.need(len(rows) == len(declared) and {row['Service'] for row in rows} == declared
+           and all(row['State'] == 'running' and row.get('Health', '') in ('healthy', '') and row['ID']
+                   for row in rows), 'stack is not ready')
+    head_ip, node_ip = stackmode.addresses(config)
+    if role == 'head':
+        from .control import _health_url
+        r.need(stackmode.http_ok(_health_url(config), timeout=10), 'RAGFlow health check failed')
+        if mode == 'stack':
+            r.need(stackmode.http_ok(f'http://{head_ip}:8000/health', timeout=10),
+                   'DeepSeek health check failed')
+    else:
+        for key, port in stackmode.NODE_PORTS:
+            r.need(stackmode.http_ok(f'http://{node_ip}:{port}/health', timeout=10),
+                   'node model health check failed: ' + key.removeprefix('role_'))
+    return {row['Service']: row['ID'] for row in rows}
 
 
 def triple(raw):

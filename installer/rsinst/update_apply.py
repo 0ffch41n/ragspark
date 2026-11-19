@@ -1,14 +1,13 @@
 """Connect an authenticated update plan to the independent recovery journal."""
 from contextlib import nullcontext
 import hashlib
-import json
 import os
 from pathlib import Path
 import subprocess
 import sys
 import tempfile
 
-from . import paths, release as r, release_inventory as inventory, release_verify as v, stackmode, ui, update_bootstrap
+from . import paths, release as r, release_inventory as inventory, release_verify as v, ui, update_bootstrap
 from . import update_check as check, update_host as host, update_transaction as txn
 from .update_source import Busy, PreparationError
 
@@ -44,25 +43,10 @@ def verify_receipt(root, side, plan):
 
 
 def observe(tree):
-    """Record identities and readiness without creating containers or inspecting secrets."""
-    raw = host.output(['docker', 'compose', 'ps', '--all', '--format', 'json'], cwd=tree / 'compose')
-    try:
-        rows = json.loads(raw) if raw.strip() else []
-    except json.JSONDecodeError:
-        rows = [json.loads(line) for line in raw.splitlines() if line.strip()]
-    if isinstance(rows, dict):
-        rows = [rows]
-    if not any(row['State'] == 'running' for row in rows):
-        r.need(all(row['State'] in ('exited', 'created') for row in rows), 'stack is changing state')
-        return {}
-    declared = set(host.output(['docker', 'compose', 'config', '--services'], cwd=tree / 'compose').decode().split())
-    r.need(bool(declared) and {row['Service'] for row in rows} == declared
-           and all(row['State'] == 'running' and row.get('Health', '') in ('healthy', '') and row['ID']
-                   for row in rows), 'stack is not ready')
     data = r.parse(v.bounded_read(tree / 'manifest.json', 4 << 20))
-    from .control import _health_url
-    r.need(stackmode.http_ok(_health_url(data['config']), timeout=10), 'RAGFlow health check failed')
-    return {row['Service']: row['ID'] for row in rows}
+    config = data['config']
+    _, mode, role = host.local_profile(tree, config)
+    return host.observe(tree, config, mode, role)
 
 
 def verify_cli(root, tree):

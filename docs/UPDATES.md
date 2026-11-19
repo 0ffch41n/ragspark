@@ -337,9 +337,12 @@ against the signed length and digest. Import and verification of the imported
 image are later steps.
 
 Temporary payload files are removed after the check. The accepted release
-sequence stays in `accepted.json` for replay protection. The result describes
-the head only in stack mode. Node readiness and pair updates are covered by
-U3–U4.
+sequence stays in `accepted.json` for replay protection. In stack mode,
+`update --check` checks the local role using its release profile. A code-only
+transition requires the role's verified images and weights to be present
+locally. The check also records the running service identities and probes
+RAGFlow and the LLM on the head, or embedding and reranking on the node.
+Coordinated application on the pair remains a separate step.
 
 ### U2.4 — applying a code-only release on a single unit
 
