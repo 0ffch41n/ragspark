@@ -1,16 +1,17 @@
 """Prepare a signed code-only release on the node through the stable runner."""
 import os
+import shutil
+import sys
 
-from . import release as r, update_apply, update_check as check, update_transaction as txn
+from . import release as r, update_apply, update_bundle, update_check as check, update_transaction as txn
 
 
 INBOX = 'pair-inbox'
 PREPARATION = 'pair-preparation'
 
 
-def prepare(root, tree, config, area, operation_id, digest):
+def prepare(root, tree, config, area, operation_id, digest, bundle):
     r.need(not txn.pending(root), 'a local update requires recovery')
-    bundle = root / INBOX
     txn.secure_directory(bundle)
 
     def save(plan, candidate, before, after, current, target, receipt):
@@ -24,9 +25,14 @@ def prepare(root, tree, config, area, operation_id, digest):
     return check.check(root, tree, bundle, config, save, pair_release=digest)
 
 
-def request(root, tree, action, operation_id, digest):
+def node_config(tree):
     config = check.installed_config(tree)
     r.need(config.get('role') == 'node', 'pair preparation runs on the node')
+    return config
+
+
+def request(root, tree, action, operation_id, digest, bundle=None):
+    config = node_config(tree)
     area = root / PREPARATION
     if os.path.lexists(area):
         txn.secure_directory(area)
@@ -43,16 +49,35 @@ def request(root, tree, action, operation_id, digest):
             return plan
         r.need(action == 'prepare' and plan['phase'] == 'reverted', 'saved pair operation differs')
     r.need(action == 'prepare', 'no saved pair preparation')
-    return prepare(root, tree, config, area, operation_id, digest)
+    return prepare(root, tree, config, area, operation_id, digest, bundle or root / INBOX)
+
+
+def receive(root, tree, operation_id, digest, stream):
+    node_config(tree)
+    with txn.lock(root / 'pair-transfer.lock'):
+        directory = root / 'pair-transfer'
+        if os.path.lexists(directory):
+            txn.secure_directory(directory)
+            shutil.rmtree(directory)
+        directory.mkdir(mode=0o700)
+        try:
+            update_bundle.receive(stream, directory, root / 'trust', digest)
+            with txn.lock(root / 'maintenance.lock'):
+                return request(root, tree, 'prepare', operation_id, digest, bundle=directory)
+        finally:
+            shutil.rmtree(directory)
 
 
 def command(root, tree, args):
     r.need(len(args) == 3, 'expected update-node action, operation ID and release digest')
-    action = r.choice(args[0], ('prepare', 'status', 'cancel'))
+    action = r.choice(args[0], ('prepare', 'receive', 'status', 'cancel'))
     operation_id = r.string(args[1], r'[0-9a-f]{32}')
     digest = r.digest(args[2])
-    with txn.lock(root / 'maintenance.lock', exclusive=action != 'status'):
-        plan = request(root, tree, action, operation_id, digest)
+    if action == 'receive':
+        plan = receive(root, tree, operation_id, digest, sys.stdin.buffer)
+    else:
+        with txn.lock(root / 'maintenance.lock', exclusive=action != 'status'):
+            plan = request(root, tree, action, operation_id, digest)
     reply = {'operation': plan['pair_operation'], 'phase': plan['phase'], 'target': plan['target_source']}
     print(r.canonical(reply).decode('utf-8'), end='')
     return 0

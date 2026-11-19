@@ -114,13 +114,17 @@ def floor(record, previous):
                'release rollback or version reused')
 
 
-def discover(root, bundle, *, expected_manifest=None):
-    trust = root / 'trust'
+def signing_paths(trust):
     key = trust / 'allowed_signers'
     if not os.path.lexists(key):
         raise PreparationError('release signing key is not configured')
     revoked = trust / 'revoked'
-    revoked = revoked if os.path.lexists(revoked) else None
+    return key, revoked if os.path.lexists(revoked) else None
+
+
+def discover(root, bundle, *, expected_manifest=None):
+    trust = root / 'trust'
+    key, revoked = signing_paths(trust)
     cache = root / 'accepted.json'
     state = {'channel': None, 'release': None}
     if os.path.lexists(cache):

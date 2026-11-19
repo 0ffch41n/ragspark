@@ -21,7 +21,7 @@ from rsinst import backup, update_bootstrap, update_services as maintenance, upd
 from rsinst.install import CLI_SCRIPT
 from maintenance import main as gateway
 from rsinst import update_host as host, update_source as source
-from rsinst import update_node
+from rsinst import update_bundle, update_node
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'build/release'))
@@ -561,6 +561,69 @@ class UpdateCheck(unittest.TestCase):
         self.sign_release()
         self.assertIn('requires a code-only transition', self.node_operation('prepare')[1])
         self.assertFalse(self.preparation.exists())
+
+    def node_transfer_packet(self):
+        receipt = ((self.bundle / 'release.json').read_bytes(), (self.bundle / 'release.json.sig').read_bytes())
+        packet = io.BytesIO()
+        update_bundle.send(packet, self.bundle, receipt)
+        return packet.getvalue(), sha(receipt[0])
+
+    def receive_node_packet(self, stream, digest):
+        with mock.patch.object(update_node.sys, 'stdin', mock.Mock(buffer=stream)):
+            return self.node_operation('receive', digest=digest)
+
+    def test_node_receives_one_verified_bundle_and_retries_after_interruption(self):
+        self.configure_node_preparation()
+        packet, digest = self.node_transfer_packet()
+        shutil.rmtree(self.bundle)
+        transfer = self.state / 'pair-transfer'
+        transfer.mkdir(mode=0o700)
+        (transfer / 'interrupted').write_bytes(b'old partial transfer')
+        status, msg = self.receive_node_packet(io.BytesIO(packet[:-7]), digest)
+        self.assertNotEqual(status, 0)
+        self.assertIn('truncated pair bundle', msg)
+        self.assertFalse(self.preparation.exists())
+        self.assertFalse(transfer.exists())
+        self.assertFalse((self.state / 'accepted.json').exists())
+        receive = update_bundle.receive
+
+        def receive_with_lifecycle_available(*args):
+            with txn.lock(self.state / 'maintenance.lock'):
+                return receive(*args)
+
+        with mock.patch.object(update_bundle, 'receive', side_effect=receive_with_lifecycle_available):
+            status, msg = self.receive_node_packet(io.BytesIO(packet), digest)
+        self.assertEqual(status, 0, msg)
+        self.assertEqual(json.loads(msg)['phase'], 'prepared')
+        self.assertEqual((txn.operation_path(self.preparation) / 'target/README.md').read_bytes(), b'new')
+        self.assertEqual((self.old / 'README.md').read_bytes(), b'old')
+        self.assertFalse(transfer.exists())
+        self.assertEqual(self.receive_node_packet(io.BytesIO(packet), digest), (0, msg))
+        self.assertEqual(self.node_operation('status', digest=digest), (0, msg))
+
+    def test_node_rejects_tampered_or_oversized_transfer_before_preparing(self):
+        self.configure_node_preparation()
+        packet, digest = self.node_transfer_packet()
+        _, raw_size, sig_size = update_bundle.HEADER.unpack(packet[:update_bundle.HEADER.size])
+        signature_start = update_bundle.HEADER.size + raw_size
+        bad_signature = packet[:signature_start] + b'x' + packet[signature_start + 1:]
+        large = update_bundle.HEADER.pack(update_bundle.MAGIC, r.MAX_MANIFEST + 1, sig_size)
+        bad_code = packet[:-1] + bytes([packet[-1] ^ 1])
+        for payload, expected_error, read_bytes in [
+            (large, 'invalid integer', update_bundle.HEADER.size),
+            (bad_signature, 'signature', signature_start + sig_size),
+            (bad_code, 'pair code digest mismatch', len(packet)),
+            (packet + b'extra', 'unexpected data', len(packet) + 1),
+        ]:
+            with self.subTest(error=expected_error):
+                stream = io.BytesIO(payload)
+                status, msg = self.receive_node_packet(stream, digest)
+                self.assertNotEqual(status, 0)
+                self.assertIn(expected_error, msg)
+                self.assertEqual(stream.tell(), read_bytes)
+                self.assertFalse(self.preparation.exists())
+                self.assertFalse((self.state / 'accepted.json').exists())
+                self.assertFalse((self.state / 'pair-transfer').exists())
 
     def test_signed_gateway_apply_and_rollback_preserve_running_container_ids(self):
         self.setup_bootstrap()
