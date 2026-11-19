@@ -422,3 +422,29 @@ active timers are started only after recovery reaches a terminal state.
 Sources: [OpenSSH file signatures and allowed signers](https://man.openbsd.org/ssh-keygen),
 [SemVer 2.0.0](https://semver.org/). These define primitives and version syntax;
 all package fields, limits and transition policies above are RAGSpark design choices.
+
+### U3 — pairing the second Spark
+
+Both Sparks need a RAGSpark installation with the pairing command. Use the
+administrator consoles you already trust, with the configured cable link up.
+
+1. On the head, run **sudo ragspark pair** and copy the invitation.
+2. On the second Spark, run **sudo ragspark pair accept**. Paste the invitation
+   at the prompt and confirm the head's access to status. Copy the confirmation
+   and keep the displayed SSH host fingerprint for the next step.
+3. On the head, run **sudo ragspark pair finish**. Paste the confirmation from
+   the second Spark's trusted console and compare the displayed fingerprint
+   with that console before approving. Pairing completes after an authenticated
+   SSH status reply from the expected cable address.
+
+Run **sudo ragspark pair status** to check the pairing. Run **sudo ragspark pair
+revoke** first on the second Spark to remove authorization and then on the
+head to remove the local key. Follow that order before replacing a Spark or
+removing RAGSpark. A pending invitation can be displayed again with **sudo
+ragspark pair**. Repeat **sudo ragspark pair accept** with the same invitation
+if enrollment stopped on the second Spark.
+
+The second Spark uses its local Ed25519 SSH host key. The dedicated pairing
+account accepts status requests from the head's cable address and uses a
+separate key from backups. RAGSpark reports the node identity, installed
+version and systemd state. Coordinated updates remain part of U4.

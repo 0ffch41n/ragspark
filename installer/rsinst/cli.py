@@ -8,7 +8,7 @@ from . import paths, ui
 from .manifest import Manifest
 
 COMMANDS = ["install", "check", "status", "start", "stop", "restart", "logs", "llm", "acceptance", "uninstall", "prestart",
-            "watch", "backup", "restore", "update"]
+            "watch", "backup", "restore", "update", "pair"]
 
 
 def _common(suppress):
@@ -87,6 +87,10 @@ def build_parser():
     update_mode.add_argument("--resume", action="store_true", help="resume the saved operation")
     update_mode.add_argument("--rollback", action="store_true", help="restore code from the saved operation")
     update.add_argument("--from", dest="bundle", metavar="DIRECTORY", help="use a local release directory offline")
+    pair = sub.add_parser("pair", parents=[common], help="enroll the second Spark for update status")
+    pair.add_argument("pair_action", nargs="?", default="begin",
+                      choices=("begin", "accept", "finish", "status", "revoke"),
+                      help="issue an invitation, accept it on the node, finish on the head, show status or revoke")
     u = sub.add_parser("uninstall", parents=[common], help="remove RAGSpark and all its data")
     u.add_argument("--keep-images", action="store_true", help="keep the Docker images the installer pulled")
     u.add_argument("--keep-models", action="store_true", help="keep the model weights the installer downloaded")
@@ -148,6 +152,9 @@ def dispatch(args):
         "watch": watch.watch, "backup": backup.backup, "restore": backup.restore,
     }
     try:
+        if args.command == "pair":
+            from . import pair_setup
+            return pair_setup.command(args, manifest)
         return handlers[args.command](args)
     except KeyboardInterrupt:
         print("\n" + ui.t("interrupted"), file=sys.stderr)
