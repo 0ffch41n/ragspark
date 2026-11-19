@@ -64,6 +64,9 @@ def main(argv):
     root = Path(paths.host(paths.UPDATE_DIR))
     tree = Path(paths.install_dir())
     try:
+        if argv == ['update-peer']:
+            from rsinst import pair_update_transport
+            return pair_update_transport.accept(root, tree, sys.stdin.buffer)
         if argv and argv[0] == 'update-node':
             from rsinst import update_node
             return update_node.command(root, tree, argv[1:])

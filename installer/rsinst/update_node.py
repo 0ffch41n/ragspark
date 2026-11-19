@@ -68,13 +68,13 @@ def receive(root, tree, operation_id, digest, stream):
             shutil.rmtree(directory)
 
 
-def command(root, tree, args):
+def command(root, tree, args, *, stream=None):
     r.need(len(args) == 3, 'expected update-node action, operation ID and release digest')
     action = r.choice(args[0], ('prepare', 'receive', 'status', 'cancel'))
     operation_id = r.string(args[1], r'[0-9a-f]{32}')
     digest = r.digest(args[2])
     if action == 'receive':
-        plan = receive(root, tree, operation_id, digest, sys.stdin.buffer)
+        plan = receive(root, tree, operation_id, digest, stream if stream is not None else sys.stdin.buffer)
     else:
         with txn.lock(root / 'maintenance.lock', exclusive=action != 'status'):
             plan = request(root, tree, action, operation_id, digest)

@@ -10,14 +10,17 @@ import subprocess
 import sys
 import tempfile
 
-from . import pair_transport as transport, paths, preflight, release as r
+from . import pair_transport as transport, pair_update_transport as updates, paths, preflight, release as r
 from . import release_verify as v, stackmode, ui, update_transaction as txn
 from .update_source import Busy
 
 
 ACCOUNT_HOME = transport.PAIR_DIR / 'account'
+UPDATE_HOME = transport.PAIR_DIR / 'update-account'
 RECEIVER_FILES = ('pair_status.py', 'rsinst/__init__.py', 'rsinst/pair_transport.py',
                   'rsinst/release.py', 'rsinst/release_verify.py')
+UPDATE_RECEIVER_FILES = (*RECEIVER_FILES, 'pair_update.py', 'rsinst/pair_update_transport.py',
+                         'rsinst/paths.py')
 MAX_TOKEN = 1024
 MAX_RECORD = 512
 HOST_KEY = '/etc/ssh/ssh_host_ed25519_key.pub'
@@ -117,10 +120,10 @@ def create_invitation(base, local):
     return record(data, read_key(pending / 'id_ed25519.pub'))
 
 
-def managed_account(base):
+def managed_account(base, user=transport.USER, home=ACCOUNT_HOME):
     marker = base / 'account.json'
     try:
-        account = pwd.getpwnam(transport.USER)
+        account = pwd.getpwnam(user)
     except KeyError:
         account = None
     if not os.path.lexists(marker):
@@ -134,23 +137,23 @@ def managed_account(base):
         r.need(account is not None and account.pw_uid == uid, 'the managed pairing account changed')
     if account is None:
         checked_command(['/usr/sbin/useradd', '--system', '--user-group', '--no-create-home',
-                         '--home-dir', str(ACCOUNT_HOME), '--shell', '/bin/sh', transport.USER],
+                         '--home-dir', str(home), '--shell', '/bin/sh', user],
                         'cannot create the pairing account')
-        account = pwd.getpwnam(transport.USER)
-    r.need(account.pw_uid != 0 and account.pw_gid != 0 and account.pw_dir == str(ACCOUNT_HOME)
+        account = pwd.getpwnam(user)
+    r.need(account.pw_uid != 0 and account.pw_gid != 0 and account.pw_dir == str(home)
            and account.pw_shell == '/bin/sh'
-           and set(os.getgrouplist(transport.USER, account.pw_gid)) == {account.pw_gid},
+           and set(os.getgrouplist(user, account.pw_gid)) == {account.pw_gid},
            'the pairing account must have a dedicated home and no supplementary groups')
     if uid is None:
         txn.replace(marker, r.canonical({'uid': account.pw_uid}), 0o600)
 
 
-def install_receiver(base):
+def install_receiver(base, files=RECEIVER_FILES):
     target = base / 'receiver'
     ensure_directory(target, 0o755)
     ensure_directory(target / 'rsinst', 0o755)
     installer = Path(paths.install_dir()) / 'installer'
-    for name in RECEIVER_FILES:
+    for name in files:
         source = installer / name
         with v.regular_file(source, trusted=True) as stream:
             code = stream.read((128 << 10) + 1)
@@ -197,7 +200,89 @@ def finish_head(base, receipt):
     return result
 
 
+def create_update_invitation(base, local):
+    head = base / 'head'
+    data = transport.head_binding(head, head / 'id_ed25519')
+    require_endpoints(data, local)
+    target = head / 'update'
+    if not os.path.lexists(target):
+        with tempfile.TemporaryDirectory(prefix='update-key-', dir=head) as tmp:
+            stage = Path(tmp) / 'identity'
+            stage.mkdir(mode=0o700)
+            checked_command(['/usr/bin/ssh-keygen', '-q', '-t', 'ed25519', '-N', '', '-C',
+                             updates.USER, '-f', str(stage / 'id_ed25519')],
+                            'cannot create the update identity')
+            stage.rename(target)
+            txn.sync_dir(head)
+    txn.secure_directory(target)
+    return record(data, read_key(target / 'id_ed25519.pub'))
+
+
+def install_update_sudoers():
+    target = Path(paths.host(updates.SUDOERS))
+    txn.secure_directory(target.parent)
+    data = updates.sudo_rule()
+    if os.path.lexists(target):
+        with v.regular_file(target, trusted=True) as current:
+            r.need(os.fstat(current.fileno()).st_mode & 0o777 == 0o440
+                   and current.read(MAX_RECORD + 1) == data, 'existing update sudo rule differs')
+        return
+    with tempfile.TemporaryDirectory(prefix='ragspark-sudo-', dir=target.parent) as tmp:
+        validate = Path(tmp) / 'rule'
+        txn.replace(validate, data, 0o440)
+        checked_command(['/usr/sbin/visudo', '-c', '-f', str(validate)], 'invalid update sudo rule')
+    txn.replace(target, data, 0o440)
+
+
+def authorize_updates(base, offer):
+    enrolled = read_json(base / 'accepted.json')
+    r.need(offer['pair'] == enrolled['pair'] == read_json(base / 'node.json'),
+           'update invitation differs from the active pair')
+    r.need(offer['key'] != enrolled['key'], 'update and status keys must differ')
+    status_auth = base / 'account' / '.ssh' / 'authorized_keys'
+    r.need(v.bounded_read(status_auth, MAX_RECORD, trusted=True) ==
+           transport.authorized_key(offer['pair']['head_ip'], enrolled['key']).encode('ascii'),
+           'status enrollment is incomplete')
+    grant = base / 'update.json'
+    if os.path.lexists(grant):
+        r.need(read_json(grant) == offer, 'revoke the existing update key before enrolling another')
+    with v.regular_file(Path(paths.host(paths.UPDATE_RUNNER)), trusted=True):
+        pass
+    home = base / UPDATE_HOME.name
+    ensure_directory(home, 0o755)
+    managed_account(home, updates.USER, UPDATE_HOME)
+    ssh_dir = home / '.ssh'
+    ensure_directory(ssh_dir, 0o755)
+    authorization = ssh_dir / 'authorized_keys'
+    line = updates.authorized_key(offer['pair']['head_ip'], offer['key']).encode('ascii')
+    if os.path.lexists(authorization):
+        r.need(v.bounded_read(authorization, MAX_RECORD, trusted=True) == line
+               and os.path.lexists(grant), 'existing update SSH authorization differs')
+    install_receiver(base, UPDATE_RECEIVER_FILES)
+    install_update_sudoers()
+    txn.replace(grant, r.canonical(offer), 0o644)
+    txn.replace(authorization, line, 0o644)
+
+
+def remove_update_grant(base):
+    ssh_dir = base / UPDATE_HOME.name / '.ssh'
+    if os.path.lexists(ssh_dir):
+        txn.secure_directory(ssh_dir.parent)
+        txn.secure_directory(ssh_dir)
+        (ssh_dir / 'authorized_keys').unlink(missing_ok=True)
+        txn.sync_dir(ssh_dir)
+    (base / 'update.json').unlink(missing_ok=True)
+    sudoers = Path(paths.host(updates.SUDOERS))
+    if os.path.lexists(sudoers):
+        r.need(v.bounded_read(sudoers, MAX_RECORD, trusted=True) == updates.sudo_rule(),
+               'existing update sudo rule differs')
+        sudoers.unlink()
+        txn.sync_dir(sudoers.parent)
+    txn.sync_dir(base)
+
+
 def remove_node_grant(base):
+    remove_update_grant(base)
     ssh_dir = base / 'account' / '.ssh'
     if os.path.lexists(ssh_dir):
         txn.secure_directory(ssh_dir.parent)
@@ -255,9 +340,10 @@ def command(args, manifest):
     action = args.pair_action
     try:
         r.choice(role, paths.ROLES)
-        r.need(action == 'accept' or action in ('status', 'revoke') or role == 'head',
+        r.need(action in ('accept', 'update-accept', 'status', 'revoke') or role == 'head',
                'run this command on the head')
         r.need(action != 'accept' or role == 'node', 'run pair accept on the second Spark')
+        r.need(action != 'update-accept' or role == 'node', 'run pair update-accept on the second Spark')
         if action in ('status', 'revoke') and not os.path.lexists(base):
             ui.say(ui.t('pair_none'))
             return 0
@@ -293,7 +379,19 @@ def command(args, manifest):
 
 def enroll(base, role, action, manifest):
     local = endpoints(manifest, role)
-    if action == 'begin':
+    if action == 'update-invite':
+        offer = create_update_invitation(base, local)
+        ui.say(ui.t('pair_update_invitation', fingerprint=fingerprint(offer['key'])))
+        print(token('RSU', offer), flush=True)
+    elif action == 'update-accept':
+        offer = read_token('RSU', ui.t('pair_update_prompt'))
+        require_endpoints(offer['pair'], local)
+        if not ui.confirm(ui.t('pair_update_confirm', head=local['head_ip'],
+                              fingerprint=fingerprint(offer['key']))):
+            return 1
+        authorize_updates(base, offer)
+        ui.status('OK', ui.t('pair_update_allowed'))
+    elif action == 'begin':
         if os.path.lexists(base / 'head'):
             show_status(base, role)
         else:

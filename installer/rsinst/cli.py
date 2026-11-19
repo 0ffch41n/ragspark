@@ -87,10 +87,10 @@ def build_parser():
     update_mode.add_argument("--resume", action="store_true", help="resume the saved operation")
     update_mode.add_argument("--rollback", action="store_true", help="restore code from the saved operation")
     update.add_argument("--from", dest="bundle", metavar="DIRECTORY", help="use a local release directory offline")
-    pair = sub.add_parser("pair", parents=[common], help="enroll the second Spark for update status")
+    pair = sub.add_parser("pair", parents=[common], help="enroll the second Spark and grant access for updates")
     pair.add_argument("pair_action", nargs="?", default="begin",
-                      choices=("begin", "accept", "finish", "status", "revoke"),
-                      help="issue an invitation, accept it on the node, finish on the head, show status or revoke")
+                      choices=("begin", "accept", "finish", "status", "revoke", "update-invite", "update-accept"),
+                      help="enroll the pair, show status, revoke access or grant access for updates")
     u = sub.add_parser("uninstall", parents=[common], help="remove RAGSpark and all its data")
     u.add_argument("--keep-images", action="store_true", help="keep the Docker images the installer pulled")
     u.add_argument("--keep-models", action="store_true", help="keep the model weights the installer downloaded")

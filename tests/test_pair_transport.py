@@ -12,6 +12,7 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'installer'))
 from rsinst import pair_transport as pair, release as r
+from rsinst import pair_update_transport as updates
 
 
 PAIR = {'id': 'a' * 32, 'head_ip': '192.168.100.10', 'node_ip': '192.168.100.11'}
@@ -22,6 +23,33 @@ CONNECTION = '192.168.100.10 63740 192.168.100.11 22'
 
 
 class PairValidation(unittest.TestCase):
+    def test_update_receiver_rejects_other_commands_and_cable_addresses(self):
+        grant = r.canonical({'protocol': 1, 'pair': PAIR, 'key': KEY})
+        with patch.object(pair, '_read_public_node_file', side_effect=[grant, r.canonical(PAIR)]):
+            updates.verify_connection(updates.COMMAND, CONNECTION)
+        for command, connection in [
+            ('status', CONNECTION),
+            (updates.COMMAND + ' extra', CONNECTION),
+            (updates.COMMAND, CONNECTION.replace(PAIR['head_ip'], '192.168.31.243')),
+            (updates.COMMAND, CONNECTION.replace(PAIR['node_ip'], '192.168.31.190')),
+        ]:
+            with self.subTest(command=command, connection=connection), \
+                    patch.object(pair, '_read_public_node_file', side_effect=[grant, r.canonical(PAIR)]), \
+                    self.assertRaises(r.InvalidRelease):
+                updates.verify_connection(command, connection)
+        different = dict(PAIR, id='f' * 32)
+        with patch.object(pair, '_read_public_node_file', side_effect=[grant, r.canonical(different)]):
+            with self.assertRaisesRegex(r.InvalidRelease, 'active pair'):
+                updates.verify_connection(updates.COMMAND, CONNECTION)
+
+    def test_update_request_binds_pair_action_and_release(self):
+        frame = {'protocol': 1, 'pair': PAIR['id'], 'action': 'status',
+                 'operation': 'e' * 32, 'manifest_sha256': 'd' * 64}
+        for override in [{'action': 'id'}, {'pair': 'f' * 32}, {'protocol': 2},
+                         {'operation': '../foreign'}, {'manifest_sha256': 'x' * 64}]:
+            with self.subTest(override=override), self.assertRaises(r.InvalidRelease):
+                updates.request_fields(dict(frame, **override), PAIR)
+
     def test_reject_invalid_enrollments(self):
         for wrong in (dict(PAIR, head_ip='0.0.0.0'), dict(PAIR, head_ip='127.0.0.1'),
                       dict(PAIR, head_ip='192.168.100.11'), dict(PAIR, node_ip='224.0.0.1'),

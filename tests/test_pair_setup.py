@@ -13,7 +13,8 @@ import unittest
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'installer'))
-from rsinst import cli, pair_setup as pair, pair_transport as transport, paths, release as r, ui
+from rsinst import cli, pair_setup as pair, pair_transport as transport, pair_update_transport as updates
+from rsinst import paths, release as r, ui
 from rsinst.manifest import Manifest
 
 
@@ -43,7 +44,7 @@ class PairSetup(unittest.TestCase):
         (installer / 'rsinst').mkdir(parents=True)
         for folder in (installer, installer.parent, installer.parent.parent, installer / 'rsinst'):
             folder.chmod(0o755)
-        for name in pair.RECEIVER_FILES:
+        for name in pair.UPDATE_RECEIVER_FILES:
             (installer / name).write_bytes((source / name).read_bytes())
             (installer / name).chmod(0o644)
 
@@ -122,6 +123,49 @@ class PairSetup(unittest.TestCase):
         self.assertFalse(self.auth.exists())
         self.assertFalse((self.base / 'node.json').exists())
         self.assertFalse((self.base / 'accepted.json').exists())
+
+    def test_update_invitation_uses_a_distinct_key_bound_to_the_existing_pair(self):
+        offer = pair.create_invitation(self.base, LOCAL)
+        pending = self.base / 'pending'
+        (pending / 'known_hosts').write_text(transport.known_host(LOCAL['node_ip'], OTHER_KEY))
+        head = self.base / 'head'
+        pending.rename(head)
+        invite = pair.create_update_invitation(self.base, LOCAL)
+        self.assertEqual(invite['pair'], offer['pair'])
+        self.assertNotEqual(invite['key'], offer['key'])
+        self.assertEqual(pair.create_update_invitation(self.base, LOCAL), invite)
+        self.assertEqual((head / 'update/id_ed25519').stat().st_mode & 0o777, 0o600)
+        self.assertEqual((head / 'known_hosts').read_text(), transport.known_host(LOCAL['node_ip'], OTHER_KEY))
+        with patch.object(pair, 'endpoints', return_value=LOCAL), redirect_stdout(io.StringIO()) as out:
+            self.assertEqual(pair.enroll(self.base, 'head', 'update-invite', object()), 0)
+        self.assertIn(pair.fingerprint(invite['key']), out.getvalue())
+
+    def test_update_authorization_keeps_status_key_separate_and_revokes_both(self):
+        runner = Path(paths.host(paths.UPDATE_RUNNER))
+        runner.parent.mkdir(parents=True)
+        runner.write_text('fixture')
+        runner.chmod(0o600)
+        sudoers = Path(paths.host(updates.SUDOERS))
+        sudoers.parent.mkdir(parents=True)
+        invite = pair.record(BINDING, OTHER_KEY)
+        with patch.object(pair, 'managed_account') as account, patch.object(pair, 'checked_command') as validate:
+            pair.authorize_node(self.base, OFFER)
+            with self.assertRaisesRegex(r.InvalidRelease, 'keys must differ'):
+                pair.authorize_updates(self.base, OFFER)
+            pair.authorize_updates(self.base, invite)
+            pair.authorize_updates(self.base, invite)
+            account.assert_called_with(self.base / pair.UPDATE_HOME.name, updates.USER, pair.UPDATE_HOME)
+            self.assertEqual(validate.call_args.args[0][:3], ['/usr/sbin/visudo', '-c', '-f'])
+            validate.assert_called_once()
+        update_auth = self.base / pair.UPDATE_HOME.name / '.ssh/authorized_keys'
+        self.assertEqual(update_auth.read_text(), updates.authorized_key(LOCAL['head_ip'], OTHER_KEY))
+        self.assertEqual(self.auth.read_text(), transport.authorized_key(LOCAL['head_ip'], KEY))
+        self.assertEqual(sudoers.read_bytes(), updates.sudo_rule())
+        self.assertEqual(sudoers.stat().st_mode & 0o777, 0o440)
+        self.assertEqual(updates.grant(self.base, Path.read_bytes), BINDING)
+        pair.remove_node_grant(self.base)
+        for path in (self.auth, update_auth, self.base / 'update.json', sudoers):
+            self.assertFalse(path.exists())
 
     def test_unmanaged_system_account_is_not_adopted(self):
         account = SimpleNamespace(pw_uid=411, pw_gid=411, pw_dir=str(pair.ACCOUNT_HOME), pw_shell='/bin/sh')

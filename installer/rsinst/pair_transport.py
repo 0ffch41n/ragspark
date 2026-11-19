@@ -68,23 +68,27 @@ def known_host(node, key):
     return f'{cable_address(node)} {public_key(key)}\n'
 
 
-def ssh_args(data, directory):
+def connection_args(data, identity, known_hosts):
     state = binding(data)
-    return ['/usr/bin/ssh', '-F', '/dev/null', '-4', '-n', '-T',
-            '-o', 'IdentityFile=' + str(directory / 'id_ed25519'), '-b', state['head_ip'],
+    return ['/usr/bin/ssh', '-F', '/dev/null', '-4', '-T',
+            '-o', 'IdentityFile=' + str(identity), '-b', state['head_ip'],
             '-o', 'IdentityAgent=none', '-o', 'IdentitiesOnly=yes',
             '-o', 'PreferredAuthentications=publickey', '-o', 'BatchMode=yes',
             '-o', 'StrictHostKeyChecking=yes', '-o', 'GlobalKnownHostsFile=/dev/null',
-            '-o', 'UserKnownHostsFile=' + str(directory / 'known_hosts'),
+            '-o', 'UserKnownHostsFile=' + str(known_hosts),
             '-o', 'HostKeyAlgorithms=ssh-ed25519', '-o', 'UpdateHostKeys=no',
             '-o', 'VerifyHostKeyDNS=no', '-o', 'ClearAllForwardings=yes',
-            '-o', 'ForwardAgent=no', '-o', 'ConnectTimeout=5',
-            USER + '@' + state['node_ip'], COMMAND]
+            '-o', 'ForwardAgent=no', '-o', 'ConnectTimeout=5']
 
 
-def _read_ssh(argv):
-    deadline = time.monotonic() + SSH_TIMEOUT
-    with subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+def ssh_args(data, directory):
+    return [*connection_args(data, directory / 'id_ed25519', directory / 'known_hosts'),
+            '-n', USER + '@' + data['node_ip'], COMMAND]
+
+
+def _read_ssh(argv, *, stdin=subprocess.DEVNULL, timeout=None):
+    deadline = time.monotonic() + (SSH_TIMEOUT if timeout is None else timeout)
+    with subprocess.Popen(argv, stdin=stdin, stdout=subprocess.PIPE,
                           stderr=subprocess.DEVNULL, env=COMMAND_ENV) as proc:
         try:
             reply = bytearray()
@@ -93,17 +97,17 @@ def _read_ssh(argv):
                 while True:
                     left = deadline - time.monotonic()
                     if left <= 0 or not selector.select(left):
-                        raise PairUnavailable('pair status timed out')
+                        raise PairUnavailable('pair SSH request timed out')
                     chunk = os.read(proc.stdout.fileno(), MAX_REPLY + 1 - len(reply))
                     if not chunk:
                         break
                     reply.extend(chunk)
                     if len(reply) > MAX_REPLY:
-                        raise PairUnavailable('pair status reply exceeds the size limit')
+                        raise PairUnavailable('pair SSH reply exceeds the size limit')
             try:
                 code = proc.wait(timeout=max(0, deadline - time.monotonic()))
             except subprocess.TimeoutExpired:
-                raise PairUnavailable('pair status timed out') from None
+                raise PairUnavailable('pair SSH request timed out') from None
         except BaseException:
             proc.kill()
             raise
@@ -124,16 +128,22 @@ def _status(reply, expected):
     return reply
 
 
-def query_head(directory=HEAD_DIR):
-    """Query the one enrolled node using administrator-owned files."""
+def head_binding(directory, identity):
+    """Verify enrollment files and the mode of the requested private key."""
     data = binding(r.parse(v.bounded_read(directory / 'peer.json', MAX_REPLY, trusted=True)))
     hosts = v.bounded_read(directory / 'known_hosts', 256, trusted=True).decode('ascii')
     host, separator, key = hosts.rstrip('\n').partition(' ')
     r.need(separator and host == data['node_ip'] and hosts == known_host(host, key),
            'expected exactly one pinned key for the enrolled node')
-    with v.regular_file(directory / 'id_ed25519', trusted=True) as private:
+    with v.regular_file(identity, trusted=True) as private:
         r.need(stat.S_IMODE(os.fstat(private.fileno()).st_mode) == 0o600,
                'pair identity must be mode 0600')
+    return data
+
+
+def query_head(directory=HEAD_DIR):
+    """Query the one enrolled node using administrator-owned files."""
+    data = head_binding(directory, directory / 'id_ed25519')
     try:
         raw = _read_ssh(ssh_args(data, directory))
     except OSError:
@@ -164,13 +174,17 @@ def _unit_state():
     return state if result.returncode == 0 and state in UNIT_STATES else 'unknown'
 
 
+def require_cable(connection, state):
+    endpoints = connection.split()
+    r.need(len(endpoints) == 4 and endpoints[0] == state['head_ip']
+           and endpoints[2] == state['node_ip'], 'pair command requires the enrolled cable endpoints')
+
+
 def node_status(command, connection):
     """Return only the enrolled identity, release marker and systemd state."""
     r.need(command == COMMAND, 'unsupported pair command')
     state = binding(r.parse(_read_public_node_file(NODE_BINDING), MAX_REPLY))
-    endpoints = connection.split()
-    r.need(len(endpoints) == 4 and endpoints[0] == state['head_ip']
-           and endpoints[2] == state['node_ip'], 'pair status requires the enrolled cable endpoints')
+    require_cable(connection, state)
     reply = {'protocol': PROTOCOL, 'role': 'node', 'pair': state,
              'version': _read_public_node_file(NODE_VERSION).decode('ascii').strip(),
              'unit_state': _unit_state()}

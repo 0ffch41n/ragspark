@@ -451,3 +451,11 @@ The second Spark uses its local Ed25519 SSH host key. The dedicated pairing
 account accepts status requests from the head's cable address and uses a
 separate key from backups. RAGSpark reports the node identity, installed
 version and systemd state. Coordinated updates remain part of U4.
+
+After provisioning the independent update runner and pairing the Sparks, run
+`sudo ragspark pair update-invite` on the head. Paste the invitation into
+`sudo ragspark pair update-accept` on the second Spark and confirm the update
+key fingerprint. The dedicated update key uses the pinned U3 host key and the
+same cable addresses. It gives the head permission to deliver signed code and
+query or cancel its preparation. Pair revocation on the second Spark removes
+both SSH grants.

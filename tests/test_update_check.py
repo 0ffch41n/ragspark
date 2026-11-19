@@ -21,7 +21,7 @@ from rsinst import backup, update_bootstrap, update_services as maintenance, upd
 from rsinst.install import CLI_SCRIPT
 from maintenance import main as gateway
 from rsinst import update_host as host, update_source as source
-from rsinst import update_bundle, update_node
+from rsinst import pair_transport, pair_update_transport, update_bundle, update_node
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'build/release'))
@@ -624,6 +624,45 @@ class UpdateCheck(unittest.TestCase):
                 self.assertFalse(self.preparation.exists())
                 self.assertFalse((self.state / 'accepted.json').exists())
                 self.assertFalse((self.state / 'pair-transfer').exists())
+
+    def test_qsfp_client_delivers_signed_bundle_to_the_fixed_runner(self):
+        self.configure_node_preparation()
+        config = self.config['config']
+        binding = {'id': 'e' * 32, 'head_ip': config['head_ip'], 'node_ip': config['node_ip']}
+        key = ' '.join(self.key.with_suffix('.pub').read_text().split()[:2])
+        pair_dir = Path(paths.host(str(pair_transport.PAIR_DIR)))
+        head = pair_dir / 'head'
+        identity = head / 'update/id_ed25519'
+        identity.parent.mkdir(parents=True)
+        identity.touch(mode=0o600)
+        (head / 'peer.json').write_bytes(r.canonical(binding))
+        (head / 'known_hosts').write_text(pair_transport.known_host(binding['node_ip'], key))
+        (pair_dir / 'node.json').write_bytes(r.canonical(binding))
+        (pair_dir / 'update.json').write_bytes(r.canonical(dict(protocol=1, pair=binding, key=key)))
+        receipt = tuple((self.bundle / name).read_bytes() for name in ('release.json', 'release.json.sig'))
+        digest = sha(receipt[0])
+
+        def ssh(argv, stdin, timeout):
+            self.assertNotIn('-n', argv)
+            self.assertIn('StrictHostKeyChecking=yes', argv)
+            self.assertIn('IdentityFile=' + str(identity), argv)
+            self.assertIn('UserKnownHostsFile=' + str(head / 'known_hosts'), argv)
+            self.assertEqual(argv[-2:], [pair_update_transport.USER + '@' + binding['node_ip'],
+                                         pair_update_transport.COMMAND])
+            with mock.patch.dict(os.environ, {'SUDO_USER': pair_update_transport.USER}), \
+                    mock.patch.object(sys, 'stdin', mock.Mock(buffer=stdin)):
+                status, msg = self.through_gateway('update-peer')
+            self.assertEqual(status, 0, msg)
+            return msg.encode()
+
+        with mock.patch.object(pair_transport, '_read_ssh', side_effect=ssh):
+            result = pair_update_transport.query('receive', self.operation_id, digest,
+                                                 bundle=self.bundle, receipt=receipt, directory=head)
+            self.assertEqual(result['phase'], 'prepared')
+            self.assertEqual(pair_update_transport.query('status', self.operation_id, digest, directory=head), result)
+            self.assertEqual(pair_update_transport.query('cancel', self.operation_id, digest, directory=head)['phase'],
+                             'reverted')
+        self.assertNotEqual(self.through_gateway('update-peer')[0], 0)
 
     def test_signed_gateway_apply_and_rollback_preserve_running_container_ids(self):
         self.setup_bootstrap()
