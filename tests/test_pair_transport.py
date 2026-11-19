@@ -24,7 +24,7 @@ CONNECTION = '192.168.100.10 63740 192.168.100.11 22'
 
 class PairValidation(unittest.TestCase):
     def test_update_receiver_rejects_other_commands_and_cable_addresses(self):
-        grant = r.canonical({'protocol': 1, 'pair': PAIR, 'key': KEY})
+        grant = r.canonical({'protocol': 1, 'pair': PAIR, 'key': KEY, 'purpose': updates.GRANT_PURPOSE})
         with patch.object(pair, '_read_public_node_file', side_effect=[grant, r.canonical(PAIR)]):
             updates.verify_connection(updates.COMMAND, CONNECTION)
         for command, connection in [

@@ -456,6 +456,19 @@ After provisioning the independent update runner and pairing the Sparks, run
 `sudo ragspark pair update-invite` on the head. Paste the invitation into
 `sudo ragspark pair update-accept` on the second Spark and confirm the update
 key fingerprint. The dedicated update key uses the pinned U3 host key and the
-same cable addresses. It gives the head permission to deliver signed code and
-query or cancel its preparation. Pair revocation on the second Spark removes
-both SSH grants.
+same cable addresses. It gives the head permission to prepare, apply and
+confirm signed code updates on the second Spark. Pair revocation on the second
+Spark removes both SSH grants.
+
+### U4.3 — coordinating a code-only update
+
+With the independent runners, signing trust and update grant provisioned,
+start `sudo ragspark update` on the head. Both Sparks verify and save the
+signed release before code is published. The head records the commit decision
+after verification on both sides and reports success after both confirm it.
+Running services keep their container identities through code publication.
+
+After a disconnect, run `sudo ragspark update --resume` on the head. It uses
+the saved operation and bundle. Use `sudo ragspark update --rollback` before
+the commit decision to restore the prior code on both units. Once that
+decision is saved, use `--resume` to finish it. Live validation is U4.4.

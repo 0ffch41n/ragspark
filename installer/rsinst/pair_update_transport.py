@@ -13,7 +13,8 @@ COMMAND = 'update-v1'
 ENTRYPOINT = pair.PAIR_DIR / 'receiver' / 'pair_update.py'
 RUNNER = ('/usr/bin/python3', '-I', '-B', paths.UPDATE_RUNNER, 'update-peer')
 SUDOERS = '/etc/sudoers.d/ragspark-pair-update'
-ACTIONS = ('receive', 'status', 'cancel')
+ACTIONS = ('receive', 'status', 'apply', 'commit', 'cancel')
+GRANT_PURPOSE = 'signed-code-update'
 REQUEST_TIMEOUT = 1800
 
 
@@ -28,7 +29,8 @@ def sudo_rule():
 
 def grant(base, read):
     offer = r.parse(read(base / 'update.json'), pair.MAX_REPLY)
-    r.fields(offer, 'protocol pair key')
+    r.fields(offer, 'protocol pair key purpose')
+    r.need(offer['purpose'] == GRANT_PURPOSE, 'update grant requires administrator confirmation')
     r.need(r.integer(offer['protocol']) == pair.PROTOCOL, 'unsupported update grant protocol')
     data = pair.binding(offer['pair'])
     pair.public_key(offer['key'])
@@ -64,17 +66,25 @@ def read_request(stream, data):
 def reply_fields(reply, frame):
     r.fields(reply, 'operation phase target')
     r.need(reply['operation'] == frame['operation'], 'reply differs from requested operation')
-    r.choice(reply['phase'], ('prepared', 'reverted'))
-    r.fields(reply['target'], 'version manifest_sha256')
-    r.version(reply['target']['version'])
+    r.choice(reply['phase'], ('absent', 'prepared', 'publishing', 'checking', 'verified', 'committed',
+                             'reverting', 'reverted'))
+    if isinstance(reply['target'], dict) and 'version' in reply['target'] and reply['phase'] != 'absent':
+        r.fields(reply['target'], 'version manifest_sha256')
+        r.version(reply['target']['version'])
+    else:
+        r.need(reply['phase'] in ('absent', 'reverted'), 'reply requires a release version')
+        r.fields(reply['target'], 'manifest_sha256')
     r.need(reply['target']['manifest_sha256'] == frame['manifest_sha256'], 'reply differs from requested release')
     return reply
 
 
-def query(action, operation, digest, *, bundle=None, receipt=None, directory=pair.HEAD_DIR):
+def query(action, operation, digest, *, bundle=None, receipt=None, directory=pair.HEAD_DIR,
+          expected_pair=None):
     """Send a request to the enrolled node using the pinned U3 host key."""
     identity = directory / 'update' / 'id_ed25519'
     data = pair.head_binding(directory, identity)
+    if expected_pair is not None:
+        r.need(data == expected_pair, 'current enrollment differs from the saved operation')
     frame = request_fields(dict(protocol=pair.PROTOCOL, pair=data['id'], action=action,
                                 operation=operation, manifest_sha256=digest), data)
     r.need((bundle is not None and receipt is not None) if action == 'receive' else

@@ -22,6 +22,7 @@ from rsinst.install import CLI_SCRIPT
 from maintenance import main as gateway
 from rsinst import update_host as host, update_source as source
 from rsinst import pair_transport, pair_update_transport, update_bundle, update_node
+from rsinst import watch
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'build/release'))
@@ -539,7 +540,7 @@ class UpdateCheck(unittest.TestCase):
         self.assertFalse((self.state / 'accepted.json').exists())
         self.assertNotEqual(self.node_operation('publish')[0], 0)
         self.assertNotEqual(self.node_operation('prepare', operation='../invalid')[0], 0)
-        self.assertIn('no saved pair preparation', self.node_operation('status')[1])
+        self.assertEqual(json.loads(self.node_operation('status')[1])['phase'], 'absent')
         signature = self.bundle / 'release.json.sig'
         signed = signature.read_bytes()
         signature.write_bytes(b'tampered')
@@ -638,7 +639,8 @@ class UpdateCheck(unittest.TestCase):
         (head / 'peer.json').write_bytes(r.canonical(binding))
         (head / 'known_hosts').write_text(pair_transport.known_host(binding['node_ip'], key))
         (pair_dir / 'node.json').write_bytes(r.canonical(binding))
-        (pair_dir / 'update.json').write_bytes(r.canonical(dict(protocol=1, pair=binding, key=key)))
+        (pair_dir / 'update.json').write_bytes(r.canonical(dict(
+            protocol=1, pair=binding, key=key, purpose=pair_update_transport.GRANT_PURPOSE)))
         receipt = tuple((self.bundle / name).read_bytes() for name in ('release.json', 'release.json.sig'))
         digest = sha(receipt[0])
 
@@ -663,6 +665,127 @@ class UpdateCheck(unittest.TestCase):
             self.assertEqual(pair_update_transport.query('cancel', self.operation_id, digest, directory=head)['phase'],
                              'reverted')
         self.assertNotEqual(self.through_gateway('update-peer')[0], 0)
+
+    def configure_pair_update(self):
+        self.configure_stack_release()
+        self.config['config']['role'] = 'head'
+        (self.old / 'manifest.json').write_bytes(r.canonical(self.config))
+        self.node_tree = self.prefix / 'node-tree'
+        shutil.copytree(self.old, self.node_tree)
+        node_config = dict(self.config, config=dict(self.config['config'], role='node'))
+        (self.node_tree / 'manifest.json').write_bytes(r.canonical(node_config))
+        self.node_state = self.prefix / 'node-state'
+        shutil.copytree(self.state, self.node_state)
+        self.peer = {'id': 'e' * 32, 'head_ip': self.config['config']['head_ip'],
+                     'node_ip': self.config['config']['node_ip']}
+        self.patch(pair_transport, 'head_binding', mock.Mock(return_value=self.peer))
+        self.patch(update_bootstrap, 'ensure_ready', mock.Mock())
+        self.remote = self.patch(pair_update_transport, 'query', mock.Mock(side_effect=self.forward_pair))
+
+    def forward_pair(self, action, operation, digest, *, directory, expected_pair, bundle=None, receipt=None):
+        self.assertEqual(expected_pair, self.peer)
+        stream = None
+        if action == 'receive':
+            stream = io.BytesIO()
+            update_bundle.send(stream, bundle, receipt)
+            stream.seek(0)
+        output = io.StringIO()
+        with redirect_stdout(output):
+            status = update_node.command(self.node_state, self.node_tree, [action, operation, digest], stream=stream)
+        self.assertEqual(status, 0, output.getvalue())
+        return json.loads(output.getvalue())
+
+    def pair_start(self):
+        return self.through_gateway('update', '--from', str(self.bundle), '--yes', '--lang', 'en')
+
+    def test_pair_resume_after_node_prepares_without_reopening_bundle(self):
+        self.configure_pair_update()
+
+        def drop(action, *args, **kwargs):
+            if action == 'receive':
+                self.assertEqual((self.old / 'VERSION').read_text(), 'abc0123\n')
+                self.forward_pair(action, *args, **kwargs)
+                raise pair_transport.PairUnavailable('reply lost after preparation')
+            return self.forward_pair(action, *args, **kwargs)
+
+        self.remote.side_effect = drop
+        status, msg = self.pair_start()
+        self.assertEqual(status, 7, msg)
+        self.assertIn('reply lost', msg)
+        head = txn.load_plan(txn.operation_path(self.state))
+        self.assertEqual(head['phase'], 'prepared')
+        self.assertIsNone(head['pair']['decision'])
+        self.assertEqual((self.node_tree / 'VERSION').read_text(), 'abc0123\n')
+        shutil.rmtree(self.bundle)
+        self.remote.side_effect = self.forward_pair
+        self.remote.reset_mock()
+        status, msg = self.through_gateway('update', '--resume', '--yes', '--lang', 'en')
+        self.assertEqual(status, 0, msg)
+        self.assertEqual([call.args[0] for call in self.remote.call_args_list], ['status', 'apply', 'commit'])
+        for root, tree in ((self.state, self.old), (self.node_state, self.node_tree)):
+            self.assertEqual(txn.load_plan(txn.operation_path(root))['phase'], 'committed')
+            self.assertEqual((tree / 'VERSION').read_text(), '0.2.0\n')
+
+    def test_pair_saved_commit_survives_lost_acknowledgement(self):
+        self.configure_pair_update()
+
+        def drop(action, *args, **kwargs):
+            reply = self.forward_pair(action, *args, **kwargs)
+            if action == 'commit':
+                head = txn.load_plan(txn.operation_path(self.state))
+                self.assertEqual(head['phase'], 'verified')
+                self.assertEqual(head['pair']['decision'], 'commit')
+                raise pair_transport.PairUnavailable('commit acknowledgement lost')
+            return reply
+
+        self.remote.side_effect = drop
+        status, msg = self.pair_start()
+        self.assertEqual(status, 7, msg)
+        self.assertEqual(txn.load_plan(txn.operation_path(self.node_state))['phase'], 'committed')
+        self.assertEqual(self.through_gateway('update', '--rollback', '--yes')[0], 3)
+        with mock.patch.object(watch, 'fuse_only') as fuse:
+            self.assertEqual(self.through_gateway('watch')[0], 0)
+            fuse.assert_called_once_with('head')
+        self.remote.side_effect = self.forward_pair
+        self.remote.reset_mock()
+        status, msg = self.through_gateway('update', '--resume', '--yes', '--lang', 'en')
+        self.assertEqual(status, 0, msg)
+        self.assertEqual([call.args[0] for call in self.remote.call_args_list], ['commit'])
+        self.assertEqual(txn.load_plan(txn.operation_path(self.state))['phase'], 'committed')
+
+    def test_pair_rollback_before_decision_restores_both_nodes(self):
+        self.configure_pair_update()
+
+        def drop(action, *args, **kwargs):
+            reply = self.forward_pair(action, *args, **kwargs)
+            if action == 'apply':
+                raise pair_transport.PairUnavailable('apply acknowledgement lost')
+            return reply
+
+        self.remote.side_effect = drop
+        status, msg = self.pair_start()
+        self.assertEqual(status, 7, msg)
+        self.assertEqual(txn.load_plan(txn.operation_path(self.node_state))['phase'], 'verified')
+        self.assertEqual((self.node_tree / 'README.md').read_bytes(), b'new')
+        self.assertEqual((self.old / 'README.md').read_bytes(), b'old')
+        self.remote.side_effect = self.forward_pair
+        status, msg = self.through_gateway('update', '--rollback', '--yes', '--lang', 'en')
+        self.assertEqual(status, 0, msg)
+        for root, tree in ((self.state, self.old), (self.node_state, self.node_tree)):
+            journal = txn.load_plan(txn.operation_path(root))
+            self.assertEqual(journal['phase'], 'reverted')
+            self.assertEqual((tree / 'README.md').read_bytes(), b'old')
+            self.assertFalse((root / 'installed-release.json').exists())
+
+    def test_node_remembers_cancellation_of_an_unreceived_release(self):
+        self.configure_node_preparation()
+        packet, digest = self.node_transfer_packet()
+        status, msg = self.node_operation('cancel', digest=digest)
+        self.assertEqual(status, 0, msg)
+        self.assertEqual(json.loads(msg)['phase'], 'reverted')
+        self.assertEqual(self.receive_node_packet(io.BytesIO(packet), digest), (0, msg))
+        self.assertFalse(self.preparation.exists())
+        self.assertEqual((self.old / 'VERSION').read_text(), 'abc0123\n')
 
     def test_signed_gateway_apply_and_rollback_preserve_running_container_ids(self):
         self.setup_bootstrap()

@@ -50,6 +50,18 @@ def is_update(argv):
     return False
 
 
+def keep_memory_fuse(tree):
+    from rsinst import update_check, update_host, watch
+    try:
+        _, mode, role = update_host.local_profile(tree, update_check.installed_config(tree))
+        if mode == 'stack':
+            watch.fuse_only(role)
+            return True
+    except (OSError, ValueError):
+        return False
+    return False
+
+
 def main(argv):
     systemd = bool(argv) and argv[0] in ('unit-start', 'unit-stop')
     if systemd and len(argv) != 3:
@@ -72,6 +84,8 @@ def main(argv):
             return update_node.command(root, tree, argv[1:])
         with txn.lock(root / 'maintenance.lock', exclusive=update and not args.check) as fd:
             if not recovery and txn.pending(root):
+                if argv == ['watch'] and keep_memory_fuse(tree):
+                    return 0
                 ui.status('FAIL', ui.t('up_recover'))
                 return 7
             if update:
@@ -82,6 +96,8 @@ def main(argv):
                     return unit(tree, argv, fd, cache)
                 return installed(tree, argv, fd, cache)
     except Busy:
+        if argv == ['watch'] and keep_memory_fuse(tree):
+            return 0
         ui.status('FAIL', ui.t('up_busy'))
         return 4
     except (OSError, ValueError, PreparationError) as exc:

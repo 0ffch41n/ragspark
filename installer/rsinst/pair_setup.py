@@ -244,8 +244,10 @@ def authorize_updates(base, offer):
            transport.authorized_key(offer['pair']['head_ip'], enrolled['key']).encode('ascii'),
            'status enrollment is incomplete')
     grant = base / 'update.json'
+    authorization_record = dict(offer, purpose=updates.GRANT_PURPOSE)
     if os.path.lexists(grant):
-        r.need(read_json(grant) == offer, 'revoke the existing update key before enrolling another')
+        r.need(read_json(grant) in (offer, authorization_record),
+               'revoke the existing update key before enrolling another')
     with v.regular_file(Path(paths.host(paths.UPDATE_RUNNER)), trusted=True):
         pass
     home = base / UPDATE_HOME.name
@@ -260,7 +262,7 @@ def authorize_updates(base, offer):
                and os.path.lexists(grant), 'existing update SSH authorization differs')
     install_receiver(base, UPDATE_RECEIVER_FILES)
     install_update_sudoers()
-    txn.replace(grant, r.canonical(offer), 0o644)
+    txn.replace(grant, r.canonical(authorization_record), 0o644)
     txn.replace(authorization, line, 0o644)
 
 

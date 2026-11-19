@@ -172,6 +172,12 @@ def recover(root, tree, rollback):
     operation = txn.operation_path(root)
     r.need(os.path.lexists(operation), 'no saved update operation')
     plan = txn.load_plan(operation)
+    if 'pair' in plan:
+        from . import update_pair
+        return update_pair.recover(root, tree, rollback)
+    if 'pair_operation' in plan:
+        ui.say(ui.t('up_node'))
+        return 3
     phase = plan['phase']
     if 'service_update' in plan:
         from . import update_services
@@ -229,7 +235,9 @@ def command(args, gated=False):
                 return 7
             if args.check:
                 return check.update(args)
-            return check.update(args, lambda *values: publish(root, tree, *values))
+            from . import update_pair
+            return check.update(args, lambda *values: publish(root, tree, *values),
+                                pair_apply=lambda *values: update_pair.publish(root, tree, *values))
     except Busy:
         ui.status('FAIL', ui.t('up_busy'))
         return 4

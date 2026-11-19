@@ -23,7 +23,7 @@ TRANSACTION = 'transaction'
 RECEIPT = {'installed-release.json': r.MAX_MANIFEST, 'installed-release.json.sig': v.MAX_SIGNATURE}
 TERMINAL = ('committed', 'reverted')
 METADATA = {'VERSION', 'manifest.json'}
-PHASES = ('prepared', 'publishing', 'checking', 'committed', 'reverting', 'reverted')
+PHASES = ('prepared', 'publishing', 'checking', 'verified', 'committed', 'reverting', 'reverted')
 
 
 def sync_dir(path):
@@ -147,8 +147,33 @@ def pending(root):
     return False
 
 
+def activate(root, prepared):
+    """Install a sealed journal on the same filesystem under the external lock."""
+    operation = root / TRANSACTION
+    r.need(not pending(root), 'previous update requires recovery')
+    if os.path.lexists(operation):
+        completed = root / 'completed'
+        if os.path.lexists(completed):
+            secure_directory(completed)
+            shutil.rmtree(completed)
+        os.rename(operation, completed)
+        sync_dir(root)
+    os.rename(prepared, operation)
+    sync_dir(root)
+    if prepared.parent != root:
+        sync_dir(prepared.parent)
+    return operation
+
+
+def pair_control(control):
+    from . import pair_transport
+    r.fields(control, 'peer decision')
+    pair_transport.binding(control['peer'])
+    r.need(control['decision'] in (None, 'commit', 'rollback'), 'invalid pair decision')
+
+
 def prepare(root, tree, staged, before, after, current, target, receipts=None, containers=None,
-            service_update=None, *, pair_operation=None):
+            service_update=None, *, pair_operation=None, pair=None, bundle=None):
     """Seal previous and candidate bytes before publishing the prepared phase.
 
     Caller owns the external lock and has verified the signed transition. Keeps a
@@ -156,7 +181,6 @@ def prepare(root, tree, staged, before, after, current, target, receipts=None, c
     """
     for path in (root, tree, staged):
         secure_directory(path)
-    operation = root / TRANSACTION
     r.need(not pending(root), 'previous update requires recovery')
     r.need(inventory.compare(tree, before, current)['matches'], 'installed inventory changed')
     r.inventory(after, 'code')
@@ -173,6 +197,10 @@ def prepare(root, tree, staged, before, after, current, target, receipts=None, c
     if pair_operation is not None:
         r.string(pair_operation, r'[0-9a-f]{32}')
         r.need(service_update is None, 'pair journal cannot contain a service update')
+    r.need((pair is None) == (bundle is None), 'pair coordinator requires its code bundle')
+    if pair is not None:
+        r.need(pair_operation is not None and receipts is not None, 'invalid pair coordinator journal')
+        pair_control(pair)
     changed = set(changes(before, after))
     pending_dir = Path(tempfile.mkdtemp(prefix='prepare-', dir=root))
     try:
@@ -189,6 +217,18 @@ def prepare(root, tree, staged, before, after, current, target, receipts=None, c
             plan['service_update'] = service_update
         if pair_operation is not None:
             plan['pair_operation'] = pair_operation
+        if pair is not None:
+            plan['pair'] = pair
+            release = r.manifest(receipts['target'][0])
+            archive = next(item for item in release['artifacts'] if item['kind'] == 'code')
+            dest = pending_dir / 'bundle' / archive['path']
+            dest.parent.mkdir(parents=True, mode=0o700)
+            with v.regular_file(bundle / archive['path']) as src, dest.open('xb') as out:
+                shutil.copyfileobj(src, out, v.CHUNK)
+                out.flush()
+                os.fsync(out.fileno())
+            for directory, _, _ in os.walk(pending_dir / 'bundle', topdown=False):
+                sync_dir(directory)
         for side, base, files, marks in [('previous', tree, before, previous_meta),
                                          ('target', staged, after, target_meta)]:
             snapshot = pending_dir / side
@@ -215,15 +255,7 @@ def prepare(root, tree, staged, before, after, current, target, receipts=None, c
                     replace(snapshot / name, content, 0o600)
             plan[side] = {'inventory': files, 'metadata': meta, 'receipt': proof}
         replace(pending_dir / 'journal.json', r.canonical(plan), 0o600)
-        if os.path.lexists(operation):
-            completed = root / 'completed'
-            if os.path.lexists(completed):
-                secure_directory(completed)
-                shutil.rmtree(completed)
-            os.rename(operation, completed)
-            sync_dir(root)
-        os.rename(pending_dir, operation)
-        sync_dir(root)
+        activate(root, pending_dir)
         return plan
     finally:
         if pending_dir.exists():
@@ -245,6 +277,9 @@ def load_plan(operation):
         r.string(plan['pair_operation'], r'[0-9a-f]{32}')
         r.need('service_update' not in plan, 'pair journal cannot contain a service update')
         fields += ' pair_operation'
+        if 'pair' in plan:
+            pair_control(plan['pair'])
+            fields += ' pair'
     r.fields(plan, fields)
     containers = plan['containers']
     if containers is not None:
@@ -254,6 +289,7 @@ def load_plan(operation):
             r.string(ident, r'[a-f0-9]{12,64}')
     r.need(r.integer(plan['schema']) == SCHEMA, 'unsupported update journal')
     r.choice(plan['phase'], PHASES)
+    r.need(plan['phase'] != 'verified' or 'pair_operation' in plan, 'verified phase requires a pair operation')
     r.source(plan['previous_source'])
     r.source(plan['target_source'])
     for side in ('previous', 'target'):
@@ -284,6 +320,15 @@ def mark(operation, plan, phase):
     next_plan = dict(plan, phase=phase)
     replace(operation / 'journal.json', r.canonical(next_plan), 0o600)
     plan['phase'] = phase
+
+
+def commit_pair(operation, plan):
+    r.need('pair_operation' in plan and plan['phase'] in ('verified', 'committed'),
+           'pair code has not been verified')
+    r.need('pair' not in plan or plan['pair']['decision'] == 'commit', 'pair commit decision is missing')
+    if plan['phase'] != 'committed':
+        mark(operation, plan, 'committed')
+    return plan['phase']
 
 
 def project(tree, operation, current, other, side, scratch, checkpoint):
@@ -326,7 +371,7 @@ def publish_receipt(root, operation, side, proof, checkpoint):
             checkpoint(side + ':' + name)
 
 
-def run(root, tree, verify, rollback=False, checkpoint=lambda _: None):
+def run(root, tree, verify, rollback=False, checkpoint=lambda _: None, *, defer_commit=False):
     """Resume the durable direction, or select rollback under an external lock.
 
     A stopped process leaves the journal pending. Ordinary verification failure
@@ -334,8 +379,21 @@ def run(root, tree, verify, rollback=False, checkpoint=lambda _: None):
     """
     operation = operation_path(root)
     plan = load_plan(operation)
+    if 'pair_operation' in plan:
+        r.need(defer_commit or rollback, 'pair publication requires a coordinated decision')
+        if rollback and 'pair' in plan:
+            r.need(plan['pair']['decision'] == 'rollback', 'pair rollback decision is missing')
+    else:
+        r.need(not defer_commit, 'deferred commit requires a pair operation')
     if plan['phase'] == 'reverted' or (plan['phase'] == 'committed' and not rollback):
         return plan['phase']
+    if plan['phase'] == 'verified' and not rollback:
+        return plan['phase']
+    if plan['phase'] == 'prepared' and 'pair_operation' in plan and not rollback:
+        r.need(inventory.compare(tree, plan['previous']['inventory'], plan['previous_source'])['matches'],
+               'installed inventory changed after pair preparation')
+        for rec in plan['previous']['metadata']:
+            read_snapshot(tree / rec['path'], rec)
     if rollback and plan['phase'] != 'reverting':
         if plan['phase'] == 'committed':
             r.need(inventory.compare(tree, plan['target']['inventory'], plan['target_source'])['matches'],
@@ -376,7 +434,7 @@ def run(root, tree, verify, rollback=False, checkpoint=lambda _: None):
     finally:
         shutil.rmtree(scratch)
         sync_dir(tree)
-    phase = 'reverted' if reverting else 'committed'
+    phase = 'reverted' if reverting else 'verified' if defer_commit else 'committed'
     mark(operation, plan, phase)
     checkpoint(phase)
     return phase

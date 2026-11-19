@@ -64,8 +64,12 @@ def disk_plan(stage, old, models_dir, code, files, missing, transition, role, jo
     return list(space.filesystems.values())
 
 
-def check(root, old, bundle, config, apply=None, *, pair_release=None):
+def check(root, old, bundle, config, apply=None, *, pair_release=None, pair_apply=None):
     llm, mode, role = host.local_profile(old, config)
+    coordinating = mode == 'stack' and pair_apply is not None
+    if coordinating:
+        apply = pair_apply
+    preparing_pair = pair_release is not None or coordinating
     if pair_release is not None:
         r.need(mode == 'stack' and bundle is not None, 'pair preparation requires a local stack bundle')
     models_dir = Path(config.get('models_dir', paths.DEFAULT_MODELS_DIR))
@@ -86,7 +90,7 @@ def check(root, old, bundle, config, apply=None, *, pair_release=None):
             r.need(pair_release is None, 'pair release is already installed')
             return dict(plan, same=True)
         transition = r.select_transition(release, current, profile['id'], mode, llm, release['target'], sequence)
-        if pair_release is not None:
+        if preparing_pair:
             r.need(transition['impact'] == 'code' and transition['backup'] == 'none',
                    'pair preparation requires a code-only transition without a data backup')
         elif apply:
@@ -116,6 +120,8 @@ def check(root, old, bundle, config, apply=None, *, pair_release=None):
         if apply or stack_code:
             journal = (code['expanded_bytes'] + sum(rec['bytes'] for rec in files)
                        + len(receipt[0]) * 2 + 2 * r.MAX_MANIFEST + 8 * (1 << 20))
+        if preparing_pair and role == 'head':
+            journal += code['bytes']
         space = disk_plan(stage, old, models_dir, code, files, missing, transition, role, journal)
         archive = source.stage_artifact(stage, bundle, code)
         candidate = stage / 'candidate'
@@ -167,18 +173,18 @@ def show(plan):
     ui.say(ui.t('up_pause_unknown' if t['impact'] != 'code' or t['backup'] == 'required' else 'up_pause_zero'))
 
 
-def update(args, apply=None):
+def update(args, apply=None, *, pair_apply=None):
     root = Path(paths.host(paths.UPDATE_DIR))
     old = Path(paths.install_dir())
     try:
         config = installed_config(old)
         if not args.lang and config.get('lang') in ('ru', 'en'):
             ui.set_lang(config['lang'])
-        if apply and config.get('role', 'head') == 'node':
+        if (apply or pair_apply) and config.get('role', 'head') == 'node':
             ui.say(ui.t('up_node'))
             return 3
         bundle = Path(args.bundle).absolute() if args.bundle is not None else None
-        result = check(root, old, bundle, config, apply)
+        result = check(root, old, bundle, config, apply, pair_apply=pair_apply)
         if isinstance(result, dict):
             show(result)
             return 0

@@ -154,6 +154,25 @@ def fuse_record():
     return (at, state.get("fuse_gib")) if isinstance(at, (int, float)) else None
 
 
+def _memory_fuse(state, name, rank):
+    _, fuse = decide_fuse(state, rank, mem_available_gib(), time.time())
+    if fuse != "stop" or not name:
+        return False
+    code, out = run(["docker", "stop", "-t", "30", name])
+    ui.status("DO" if code == 0 else "FAIL", ui.t("watch_fuse", name=name, gib=state["fuse_gib"], limit=FUSE_GIB)
+              + ("" if code == 0 else ": " + out.strip()[-200:]))
+    return True
+
+
+def fuse_only(role):
+    """Keep memory protection available from the independent update runner."""
+    path = state_path()
+    state = _load_state(path)
+    project = paths.NODE_PROJECT if role == "node" else paths.PROJECT
+    _memory_fuse(state, *rank_state(project))
+    _save_state(path, state)
+
+
 def watch(args):
     manifest = Manifest.load()
     if manifest is None or manifest.status != "installed":
@@ -172,11 +191,7 @@ def watch(args):
     state = _load_state(path)
 
     name, rank = rank_state(paths.project())
-    state, fuse = decide_fuse(state, rank, mem_available_gib(), time.time())
-    if fuse == "stop" and name:
-        code, out = run(["docker", "stop", "-t", "30", name])
-        ui.status("DO" if code == 0 else "FAIL", ui.t("watch_fuse", name=name, gib=state["fuse_gib"], limit=FUSE_GIB)
-                  + ("" if code == 0 else ": " + out.strip()[-200:]))
+    if _memory_fuse(state, name, rank):
         _save_state(path, state)
         return 0
     if role == "node":
