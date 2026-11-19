@@ -11,6 +11,13 @@ def code_artifact(release):
     return next(a for a in release['artifacts'] if a['kind'] == 'code')
 
 
+def installed_config(tree):
+    state = r.parse(v.bounded_read(tree / 'manifest.json', 4 << 20))
+    r.need(isinstance(state, dict) and isinstance(state.get('config'), dict), 'invalid installation manifest')
+    r.need(state.get('schema') == 1 and state.get('status') == 'installed', 'installation is not ready')
+    return state['config']
+
+
 def installed(root, old, key, revoked):
     signed = root / 'installed-release.json'
     if os.path.lexists(signed):
@@ -57,13 +64,15 @@ def disk_plan(stage, old, models_dir, code, files, missing, transition, role, jo
     return list(space.filesystems.values())
 
 
-def check(root, old, bundle, config, apply=None):
+def check(root, old, bundle, config, apply=None, *, pair_release=None):
     llm, mode, role = host.local_profile(old, config)
+    if pair_release is not None:
+        r.need(mode == 'stack' and bundle is not None, 'pair preparation requires a local stack bundle')
     models_dir = Path(config.get('models_dir', paths.DEFAULT_MODELS_DIR))
     r.need(models_dir.is_absolute(), 'invalid model cache path')
     models_dir = Path(paths.host(str(models_dir)))
     with source.workspace(root) as stage:
-        release, identity, key, revoked, receipt = source.discover(root, bundle)
+        release, identity, key, revoked, receipt = source.discover(root, bundle, expected_manifest=pair_release)
         current, files, sequence = installed(root, old, key, revoked)
         profiles = [p for p in release['profiles'] if p['mode'] == mode and p['llm'] == llm]
         r.need(len(profiles) == 1, 'no unique profile matching the installed model and mode')
@@ -74,9 +83,13 @@ def check(root, old, bundle, config, apply=None):
                 'mode': mode, 'llm': llm, 'role': role, 'available_ram': available}
         if current.get('version') == release['version']:
             r.need(current['manifest_sha256'] == identity['manifest_sha256'], 'installed release version reused')
+            r.need(pair_release is None, 'pair release is already installed')
             return dict(plan, same=True)
         transition = r.select_transition(release, current, profile['id'], mode, llm, release['target'], sequence)
-        if apply:
+        if pair_release is not None:
+            r.need(transition['impact'] == 'code' and transition['backup'] == 'none',
+                   'pair preparation requires a code-only transition without a data backup')
+        elif apply:
             r.need(mode == 'single' and (transition['impact'], transition['backup']) in
                    (('code', 'none'), ('services', 'required')),
                    'apply requires a compatible single-node code or service transition')
@@ -94,11 +107,11 @@ def check(root, old, bundle, config, apply=None):
                 reused.append(ident)
             else:
                 missing.append(a)
-        if apply:
-            r.need(len(missing) == 1, 'apply requires all dependencies already installed')
         if stack_code:
             r.need(len(missing) == 1, 'stack code update requires locally verified dependencies: ' +
                    ', '.join(a['id'] for a in missing[1:]))
+        elif apply:
+            r.need(len(missing) == 1, 'apply requires all dependencies already installed')
         journal = 0
         if apply or stack_code:
             journal = (code['expanded_bytes'] + sum(rec['bytes'] for rec in files)
@@ -158,10 +171,7 @@ def update(args, apply=None):
     root = Path(paths.host(paths.UPDATE_DIR))
     old = Path(paths.install_dir())
     try:
-        state = r.parse(v.bounded_read(old / 'manifest.json', 4 << 20))
-        r.need(isinstance(state, dict) and isinstance(state.get('config'), dict), 'invalid installation manifest')
-        r.need(state.get('schema') == 1 and state.get('status') == 'installed', 'installation is not ready')
-        config = state['config']
+        config = installed_config(old)
         if not args.lang and config.get('lang') in ('ru', 'en'):
             ui.set_lang(config['lang'])
         if apply and config.get('role', 'head') == 'node':

@@ -13,7 +13,7 @@ import tempfile
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from rsinst import cli, paths, release as r, ui, update_apply, update_transaction as txn
-from rsinst.update_source import Busy
+from rsinst.update_source import Busy, PreparationError
 from rsinst.sysutil import retain_update_lock
 
 
@@ -64,6 +64,9 @@ def main(argv):
     root = Path(paths.host(paths.UPDATE_DIR))
     tree = Path(paths.install_dir())
     try:
+        if argv and argv[0] == 'update-node':
+            from rsinst import update_node
+            return update_node.command(root, tree, argv[1:])
         with txn.lock(root / 'maintenance.lock', exclusive=update and not args.check) as fd:
             if not recovery and txn.pending(root):
                 ui.status('FAIL', ui.t('up_recover'))
@@ -78,7 +81,7 @@ def main(argv):
     except Busy:
         ui.status('FAIL', ui.t('up_busy'))
         return 4
-    except (OSError, ValueError) as exc:
+    except (OSError, ValueError, PreparationError) as exc:
         ui.status('FAIL', ui.t('up_prepare', detail=str(exc)))
         return 5
     except KeyboardInterrupt:

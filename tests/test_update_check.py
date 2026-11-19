@@ -21,6 +21,7 @@ from rsinst import backup, update_bootstrap, update_services as maintenance, upd
 from rsinst.install import CLI_SCRIPT
 from maintenance import main as gateway
 from rsinst import update_host as host, update_source as source
+from rsinst import update_node
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'build/release'))
@@ -480,6 +481,86 @@ class UpdateCheck(unittest.TestCase):
         with mock.patch.dict(os.environ, {'RAGSPARK_ALLOW_NONROOT': '1'}), redirect_stdout(out):
             status = gateway(list(args))
         return status, out.getvalue()
+
+    def configure_node_preparation(self):
+        self.configure_stack_release()
+        self.config['config']['role'] = 'node'
+        (self.old / 'manifest.json').write_bytes(r.canonical(self.config))
+        inbox = self.state / update_node.INBOX
+        self.bundle.rename(inbox)
+        self.bundle = inbox
+        self.operation_id = 'a' * 32
+        self.preparation = self.state / update_node.PREPARATION
+
+    def node_operation(self, action, operation=None, digest=None):
+        return self.through_gateway('update-node', action, operation or self.operation_id,
+                                    digest or sha((self.bundle / 'release.json').read_bytes()))
+
+    def test_node_prepares_one_signed_release_and_keeps_the_running_installation(self):
+        self.configure_node_preparation()
+        metadata = (self.old / 'manifest.json').read_bytes()
+        digest = sha((self.bundle / 'release.json').read_bytes())
+        status, msg = self.node_operation('prepare')
+        self.assertEqual(status, 0, msg)
+        expected = {'operation': self.operation_id, 'phase': 'prepared',
+                    'target': {'version': '0.2.0', 'manifest_sha256': digest}}
+        self.assertEqual(json.loads(msg), expected)
+        journal = txn.operation_path(self.preparation)
+        plan = txn.load_plan(journal)
+        self.assertEqual(plan['containers'], {r['Service']: r['ID'] for r in self.rows['node']})
+        self.assertEqual((journal / 'previous/README.md').read_bytes(), b'old')
+        self.assertEqual((journal / 'target/README.md').read_bytes(), b'new')
+        self.assertEqual((journal / 'target/installed-release.json').read_bytes(),
+                         (self.bundle / 'release.json').read_bytes())
+        self.assertEqual((self.old / 'README.md').read_bytes(), b'old')
+        self.assertEqual((self.old / 'VERSION').read_text(), 'abc0123\n')
+        self.assertEqual((self.old / 'manifest.json').read_bytes(), metadata)
+        self.assertFalse(txn.pending(self.state))
+        with mock.patch('maintenance.subprocess.run', return_value=mock.Mock(returncode=0)):
+            self.assertEqual(self.through_gateway('watch')[0], 0)
+        with mock.patch.object(source, 'discover', side_effect=AssertionError('unexpected restaging')):
+            self.assertEqual(self.node_operation('prepare'), (0, msg))
+            self.assertEqual(self.node_operation('status'), (0, msg))
+        self.assertIn('saved pair operation differs', self.node_operation('prepare', operation='b' * 32)[1])
+        self.assertIn('saved pair release differs', self.node_operation('status', digest='b' * 64)[1])
+        status, msg = self.node_operation('cancel')
+        self.assertEqual(status, 0, msg)
+        expected['phase'] = 'reverted'
+        self.assertEqual(json.loads(msg), expected)
+        self.assertEqual(self.node_operation('cancel'), (0, msg))
+        self.assertEqual(self.node_operation('prepare'), (0, msg))
+        self.assertEqual(self.node_operation('prepare', operation='b' * 32)[0], 0)
+
+    def test_node_rejects_wrong_digest_tampering_and_unsupported_actions(self):
+        self.configure_node_preparation()
+        status, msg = self.node_operation('prepare', digest='b' * 64)
+        self.assertNotEqual(status, 0)
+        self.assertIn('pair release digest differs', msg)
+        self.assertFalse((self.state / 'accepted.json').exists())
+        self.assertNotEqual(self.node_operation('publish')[0], 0)
+        self.assertNotEqual(self.node_operation('prepare', operation='../invalid')[0], 0)
+        self.assertIn('no saved pair preparation', self.node_operation('status')[1])
+        signature = self.bundle / 'release.json.sig'
+        signed = signature.read_bytes()
+        signature.write_bytes(b'tampered')
+        self.assertIn('signature', self.node_operation('prepare')[1])
+        signature.write_bytes(signed)
+        (self.bundle / self.code['path']).write_bytes(b'x' * self.code['bytes'])
+        self.assertIn('digest mismatch', self.node_operation('prepare')[1])
+        self.assertFalse(self.preparation.exists())
+
+    def test_node_preparation_refuses_other_roles_and_service_transitions(self):
+        self.configure_node_preparation()
+        self.config['config']['role'] = 'head'
+        (self.old / 'manifest.json').write_bytes(r.canonical(self.config))
+        self.assertIn('runs on the node', self.node_operation('prepare')[1])
+        self.config['config']['role'] = 'node'
+        (self.old / 'manifest.json').write_bytes(r.canonical(self.config))
+        self.release['transitions'][0].update(impact='services', backup='required',
+                                               restart={'head': [], 'node': [stackmode.RANK]})
+        self.sign_release()
+        self.assertIn('requires a code-only transition', self.node_operation('prepare')[1])
+        self.assertFalse(self.preparation.exists())
 
     def test_signed_gateway_apply_and_rollback_preserve_running_container_ids(self):
         self.setup_bootstrap()

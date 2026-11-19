@@ -148,7 +148,7 @@ def pending(root):
 
 
 def prepare(root, tree, staged, before, after, current, target, receipts=None, containers=None,
-            service_update=None):
+            service_update=None, *, pair_operation=None):
     """Seal previous and candidate bytes before publishing the prepared phase.
 
     Caller owns the external lock and has verified the signed transition. Keeps a
@@ -170,6 +170,9 @@ def prepare(root, tree, staged, before, after, current, target, receipts=None, c
         safe_target(tree, name)
     r.source(target)
     r.need('version' in target, 'target must be a signed release identity')
+    if pair_operation is not None:
+        r.string(pair_operation, r'[0-9a-f]{32}')
+        r.need(service_update is None, 'pair journal cannot contain a service update')
     changed = set(changes(before, after))
     pending_dir = Path(tempfile.mkdtemp(prefix='prepare-', dir=root))
     try:
@@ -184,6 +187,8 @@ def prepare(root, tree, staged, before, after, current, target, receipts=None, c
                 'previous_source': current, 'target_source': target, 'containers': containers}
         if service_update is not None:
             plan['service_update'] = service_update
+        if pair_operation is not None:
+            plan['pair_operation'] = pair_operation
         for side, base, files, marks in [('previous', tree, before, previous_meta),
                                          ('target', staged, after, target_meta)]:
             snapshot = pending_dir / side
@@ -236,6 +241,10 @@ def load_plan(operation):
         from . import update_services
         update_services.validate_config(plan['service_update'])
         fields += ' service_update'
+    if isinstance(plan, dict) and 'pair_operation' in plan:
+        r.string(plan['pair_operation'], r'[0-9a-f]{32}')
+        r.need('service_update' not in plan, 'pair journal cannot contain a service update')
+        fields += ' pair_operation'
     r.fields(plan, fields)
     containers = plan['containers']
     if containers is not None:

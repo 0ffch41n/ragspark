@@ -114,7 +114,7 @@ def floor(record, previous):
                'release rollback or version reused')
 
 
-def discover(root, bundle):
+def discover(root, bundle, *, expected_manifest=None):
     trust = root / 'trust'
     key = trust / 'allowed_signers'
     if not os.path.lexists(key):
@@ -154,6 +154,8 @@ def discover(root, bundle):
         r.bind_channel(pointer, raw, release)
     identity = {'sequence': release['sequence'], 'version': release['version'],
                 'manifest_sha256': hashlib.sha256(raw).hexdigest()}
+    if expected_manifest is not None:
+        r.need(identity['manifest_sha256'] == r.digest(expected_manifest), 'pair release digest differs')
     floor(identity, state['release'])
     if bundle is not None and state['release'] != identity:
         persist(root, {'channel': channel, 'release': identity})
