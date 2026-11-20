@@ -4,9 +4,8 @@
 
 [English version](README.md)
 
-> **Статус: pre-alpha.** Проект создаётся открыто. Установщик работает на
-> DGX Spark (этапы 3–5), но возможны изменения; не ставьте его на машину,
-> данные которой вам нужны. См. план работ ниже.
+> **Первый публичный выпуск доступен.**
+> [Скачать RAGSpark v0.1.0](https://github.com/0ffch41n/ragspark/releases/tag/v0.1.0) · [Быстрый старт](#быстрый-старт)
 
 ## Что это
 
@@ -42,7 +41,7 @@ RAGSpark превращает DGX Spark в самодостаточную сис
 
 ```bash
 umask 022
-git clone https://github.com/0ffch41n/ragspark.git
+git clone --branch v0.1.0 --depth 1 https://github.com/0ffch41n/ragspark.git
 cd ragspark
 sudo ./install.sh
 sudo ragspark status
@@ -122,11 +121,15 @@ RAGFlow из его вывода. Войдите с указанным e-mail. �
   - [x] 6.2 — мониторинг по желанию ([docs/INSTALL.ru.md](docs/INSTALL.ru.md#мониторинг))
   - [ ] 6.3 — полный офлайн-пакет (отложен)
 
-На подготовленной установке подписанный пакет кода можно применить командой
-`sudo ragspark update --from /path/to/bundle`. В режиме `stack` процесс
-координирует ведущий Spark по QSFP. См. [руководство по обновлениям](docs/INSTALL.ru.md#подписанные-обновления)
-и [результаты U4.4 на двух узлах](docs/VALIDATION.ru.md#20-подписанные-обновления-пары-spark-u44).
-Публикация стабильного канала запланирована на U6.
+Для подготовленной установки скачайте и распакуйте [подписанный пакет кода](https://github.com/0ffch41n/ragspark/releases/download/v0.1.0/ragspark-0.1.0-code.tar.gz).
+Укажите каталог командой `sudo ragspark update --from /путь/к/пакету`.
+В режиме `stack` обновление координирует ведущий Spark по QSFP.
+[Проверка обновления пары](docs/VALIDATION.ru.md#20-подписанные-обновления-пары-spark-u44).
+
+Для онлайн-обновлений настройте доверенный ключ издателя и
+адрес [стабильного канала](https://raw.githubusercontent.com/0ffch41n/ragspark/release-channel/stable.json) по
+[руководству по обновлениям](docs/INSTALL.ru.md#подписанные-обновления).
+Затем выполните `sudo ragspark update --check`, чтобы посмотреть доступный выпуск.
 
 ## Принципы
 

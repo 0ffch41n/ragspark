@@ -4,9 +4,8 @@
 
 [Русская версия](README.ru.md)
 
-> **Status: pre-alpha.** The project is being built in public. The installer
-> works on DGX Spark (stages 3–5), but expect changes, and do not use it on a
-> machine whose data you need. See the roadmap below.
+> **The first public release is available.**
+> [Download RAGSpark v0.1.0](https://github.com/0ffch41n/ragspark/releases/tag/v0.1.0) · [Quick start](#quick-start)
 
 ## What it is
 
@@ -42,7 +41,7 @@ administrator email and web port. Accept the default model for your first run.
 
 ```bash
 umask 022
-git clone https://github.com/0ffch41n/ragspark.git
+git clone --branch v0.1.0 --depth 1 https://github.com/0ffch41n/ragspark.git
 cd ragspark
 sudo ./install.sh
 sudo ragspark status
@@ -120,11 +119,15 @@ LLM's own vision: about 20 s a page with the default LLM, about 7 with Qwen 3.6.
   - [x] 6.2 — optional health monitoring ([docs/INSTALL.md](docs/INSTALL.md#health-monitoring))
   - [ ] 6.3 — full offline bundle (deferred)
 
-Prepared installations can apply signed code updates with
-`sudo ragspark update --from /path/to/bundle`. In `stack` mode the head
-coordinates both Sparks over QSFP. See the [signed update guide](docs/INSTALL.md#signed-updates)
-and the [live U4.4 validation](docs/VALIDATION.md#20-signed-updates-on-a-spark-pair-u44).
-Stable-channel publication is planned for U6.
+For a prepared installation, download and extract the [signed code package](https://github.com/0ffch41n/ragspark/releases/download/v0.1.0/ragspark-0.1.0-code.tar.gz).
+Pass the extracted directory to `sudo ragspark update --from /path/to/bundle`.
+In `stack` mode the head coordinates both Sparks over QSFP.
+[Paired update validation](docs/VALIDATION.md#20-signed-updates-on-a-spark-pair-u44).
+
+For online updates, configure the trusted publisher key and the
+[stable channel](https://raw.githubusercontent.com/0ffch41n/ragspark/release-channel/stable.json) as described in the
+[signed update guide](docs/INSTALL.md#signed-updates). Then run
+`sudo ragspark update --check` to preview the available release.
 
 ## Design principles
 
