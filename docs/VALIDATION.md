@@ -1042,3 +1042,32 @@ returned HTTP 200. Model containers had 43 hours uptime, unchanged by backup,
 restore drill or code update. Nightly, hourly sync, node receiver and watch timers
 were active. The 52 backup tests passed on the head with Docker/systemd mocked;
 the new umask regression fails on the old code (0700 instead of 0701).
+
+## 20. Signed updates on a Spark pair (U4.4)
+
+On 20 November 2026, two DGX Spark units running DeepSeek V4 Flash Vision in
+`stack` mode tested the signed code-only transition from `191b703` to
+`0.44.1` (built from `7d64663`). The 206 KiB code archive was supplied locally
+on the head. The node verified it over QSFP using a dedicated update grant.
+Both units reused their installed images and model weights.
+
+| Interruption point | Recovery | Result |
+| --- | --- | --- |
+| The node acknowledged preparation, before code publication | `sudo ragspark update --rollback` on the head | Both units reported `reverted`. All 60 tracked files matched `191b703` on each unit. |
+| The head recorded the commit decision and the node acknowledged it | `sudo ragspark update --resume` on the head | Both units reported `committed`. All 65 tracked files matched the signed release on each unit. The stored release proof, operation journal and Compose settings passed verification. |
+
+Container IDs and start times, Docker volumes and timer states matched the
+baseline through both scenarios. RAGFlow, DeepSeek, embedding and reranker
+health probes returned HTTP 200 at the verification points. DeepSeek answered
+a chat completion after `--resume`.
+
+The first attempt at the second scenario failed with a generic SSH error.
+The head journal was `prepared` and the node had no preparation for that
+operation. A local package check passed on the node. Retrying the transfer
+for the same operation succeeded. The cause of the first failure remains
+unknown.
+
+The maintenance window included restarts to install the independent runners
+and to return both units to `191b703`. The test grant was removed and backup,
+replication and watch timers were restored. The original volumes were retained
+and all four health endpoints returned HTTP 200 after the final start.

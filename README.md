@@ -101,9 +101,11 @@ LLM's own vision: about 20 s a page with the default LLM, about 7 with Qwen 3.6.
   - [ ] 6.2 — optional monitoring
   - [ ] 6.3 — offline bundle
 
-The upcoming update/offline release contract is documented in
-[UPDATES.md](docs/UPDATES.md). It is a design proposal; `ragspark update` is not
-available yet.
+Prepared installations can apply signed code updates with
+`sudo ragspark update --from /path/to/bundle`. In `stack` mode the head coordinates both Sparks over
+QSFP. See the [update prerequisites and recovery commands](docs/UPDATES.md)
+and the [live U4.4 validation](docs/VALIDATION.md#20-signed-updates-on-a-spark-pair-u44).
+Full offline bundles and stable-channel publication are planned for U5 and U6.
 
 ## Design principles
 
