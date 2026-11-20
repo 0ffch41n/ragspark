@@ -28,7 +28,11 @@ front of the web port.
 
 ## Install
 
+Use the standard file modes for the checkout so the updater can verify the
+installed code against the publisher’s inventory.
+
 ```bash
+umask 022
 git clone https://github.com/0ffch41n/ragspark.git
 cd ragspark
 sudo ./install.sh
@@ -269,6 +273,9 @@ after a successful check. `ragspark status` displays the latest result.
 The checks leave containers running in their existing state.
 
 ## Signed updates
+
+A Git installation records its source commit even when cloned from a release
+tag. Applying a signed release records the release number.
 
 A first update requires an independent runner, a trusted publisher key and a
 verified inventory of the installed version. Set up the runner in a

@@ -41,6 +41,7 @@ Run these commands on the Spark. In the installer, choose a language,
 administrator email and web port. Accept the default model for your first run.
 
 ```bash
+umask 022
 git clone https://github.com/0ffch41n/ragspark.git
 cd ragspark
 sudo ./install.sh

@@ -1071,3 +1071,23 @@ The maintenance window included restarts to install the independent runners
 and to return both units to `191b703`. The test grant was removed and backup,
 replication and watch timers were restored. The original volumes were retained
 and all four health endpoints returned HTTP 200 after the final start.
+
+## 21. First install, signed update and monitoring (U6.2)
+
+On 20 November 2026 a clean single-mode installation on a DGX Spark used
+Qwen 3.8 27B NVFP4 and fresh Docker volumes. The installer reused the pinned
+images and weights, brought up the stack in 9.3 minutes and passed acceptance
+in 24 seconds. RAGFlow indexed the sample PDF and answered 27 °C with a source
+citation when asked for the server-room temperature limit.
+
+After provisioning the independent runner, the operator applied the signed
+code-only test release `0.62.1` from `01e582b` using `ragspark update --from`.
+All 66 installed files matched the signed manifest, and the eight container
+IDs and start times, volumes, existing timers and the chat and dataset IDs
+matched the pre-update snapshot. The RAGFlow and model probes returned HTTP 200.
+
+The operator enabled monitoring with `ragspark monitor --schedule on`. The
+timer started the check, which exited with code 0. After repeat checks,
+`ragspark status` reported the expected missing backup on a fresh stand.
+After returning to the original pair, DeepSeek answered through RAGFlow and the
+production backup, replication and watch timers were active.

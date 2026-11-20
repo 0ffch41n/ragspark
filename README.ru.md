@@ -41,6 +41,7 @@ RAGSpark превращает DGX Spark в самодостаточную сис
 и веб-порт. Для первого запуска оставьте модель по умолчанию.
 
 ```bash
+umask 022
 git clone https://github.com/0ffch41n/ragspark.git
 cd ragspark
 sudo ./install.sh

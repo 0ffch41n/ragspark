@@ -295,12 +295,14 @@ def step_files(manifest):
 
 
 def source_version():
-    """`git describe` of the clone the installer runs from, or "unknown". Root runs git in a
-    directory another user owns: trust exactly that clone, not every repository (safe.directory=*),
-    and never start a file-system monitor its configuration may name."""
+    """Identify the source commit, including a dirty marker, regardless of release tags.
+
+    The signed updater matches a Git installation against a specific commit. Root runs Git
+    with trust restricted to this clone and with the repository file-system monitor disabled.
+    """
     root = os.path.realpath(paths.SOURCE_ROOT)
     code, out = run(["git", "-c", "safe.directory=" + root, "-c", "core.fsmonitor=false", "-C", root,
-                     "describe", "--tags", "--always", "--dirty"])
+                     "describe", "--always", "--dirty", "--exclude=*"])
     return out.strip().splitlines()[-1] if code == 0 and out.strip() else "unknown"
 
 

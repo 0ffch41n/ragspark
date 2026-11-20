@@ -151,12 +151,14 @@ class SourceVersion(unittest.TestCase):
     def test_git_trusts_only_this_clone_and_runs_no_monitor(self):
         from unittest import mock
         calls = []
-        with mock.patch.object(install, "run", side_effect=lambda cmd, **kw: (calls.append(cmd), (0, "v1-2-gabc\n"))[1]):
-            self.assertEqual(install.source_version(), "v1-2-gabc")
+        with mock.patch.object(install, "run", side_effect=lambda cmd, **kw: (calls.append(cmd), (0, "123abcd\n"))[1]):
+            self.assertEqual(install.source_version(), "123abcd")
         cmd = calls[0]
         self.assertIn("safe.directory=" + os.path.realpath(install.paths.SOURCE_ROOT), cmd)
         self.assertNotIn("safe.directory=*", cmd)
         self.assertIn("core.fsmonitor=false", cmd)
+        self.assertIn("--exclude=*", cmd)
+        self.assertIn("--dirty", cmd)
         with mock.patch.object(install, "run", return_value=(128, "fatal: not a git repository")):
             self.assertEqual(install.source_version(), "unknown")
 
