@@ -248,6 +248,34 @@ answer" text. Background: D19 in [DECISIONS.md](DECISIONS.md).
 
 `--lang` and `--yes` work with every command.
 
+## Signed updates
+
+A first update requires an independent runner, a trusted publisher key and a
+verified inventory of the installed version. Set up the runner in a
+maintenance window. On a pair, prepare both units, enroll the second Spark
+over QSFP and grant update access. Follow the steps for
+[trust setup](UPDATES.md#u23--checking-a-release),
+[runner setup](UPDATES.md#u24--applying-a-code-only-release-on-a-single-unit)
+and [pairing](UPDATES.md#u3--pairing-the-second-spark).
+
+For a local signed release, use the directory containing `release.json` on
+the Spark. In stack mode run these commands on the head.
+
+```bash
+sudo ragspark update --check --from /path/to/bundle
+sudo ragspark update --from /path/to/bundle
+```
+
+Check the target version, restart and backup requirements in the plan before
+confirming. With a configured stable channel, use `sudo ragspark update --check`
+and `sudo ragspark update` without a package path.
+
+If an update is interrupted, use `sudo ragspark update --resume` to continue
+the saved operation. For a pair, `sudo ragspark update --rollback` can return
+both units to the previous code before the commit decision is recorded.
+After that decision, finish with `--resume`. After completion, run
+`sudo ragspark status` and check that a chat answers in RAGFlow.
+
 ## Start at boot
 
 `ragspark.service` runs `docker compose up -d --wait` and does not hold up the

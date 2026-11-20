@@ -31,19 +31,37 @@ citations — with every model running locally and no data leaving the machine.
 | Driver | NVIDIA 580.x (pinned — newer branches regress on GB10) |
 | Disk | ~150 GB free for images and model weights |
 | Stack mode | a second DGX Spark, a QSFP cable, ~190 GB more on each unit |
+| Network | access to GitHub, the image registries and Hugging Face |
 
-## Install
+## Quick start
+
+### One Spark
+
+Run these commands on the Spark. In the installer, choose a language,
+administrator email and web port. Accept the default model for your first run.
 
 ```bash
 git clone https://github.com/0ffch41n/ragspark.git
 cd ragspark
 sudo ./install.sh
+sudo ragspark status
 ```
 
-The installer checks the machine, downloads the images and model weights,
-starts the stack and finishes with an acceptance test. Then
-`sudo ragspark status | start | stop | logs | uninstall`. Guide:
-[docs/INSTALL.md](docs/INSTALL.md); two units: its section *Stack mode*.
+After the acceptance test, open the installer’s RAGFlow address in your
+browser. Sign in with the administrator email and retrieve the initial
+password using the command the installer prints. Open **RAGSpark sample**
+(**RAGSpark — пример** with Russian selected) and ask a question about the
+sample document.
+[First sign-in and chats](docs/INSTALL.md#after-installation).
+
+### Two Sparks
+
+[Configure the QSFP link](docs/INSTALL.md#stack-mode) and check both cable
+addresses. Clone the same repository revision on both units. Run
+`sudo ./install.sh --role node` on the second Spark first. Then run
+`sudo ./install.sh --llm deepseek-v4-flash-vision` on the head. Open RAGFlow
+at the head's web address. Pairing for updates is described in the
+[signed update guide](docs/INSTALL.md#signed-updates).
 
 ## Components
 
@@ -99,13 +117,13 @@ LLM's own vision: about 20 s a page with the default LLM, about 7 with Qwen 3.6.
 - [ ] **Stage 6** — backups, optional monitoring, offline bundle
   - [x] 6.1 — local backups, verified replication and isolated data recovery ([docs/INSTALL.md](docs/INSTALL.md), [docs/VALIDATION.md](docs/VALIDATION.md), §19)
   - [ ] 6.2 — optional monitoring
-  - [ ] 6.3 — offline bundle
+  - [ ] 6.3 — full offline bundle (deferred)
 
 Prepared installations can apply signed code updates with
-`sudo ragspark update --from /path/to/bundle`. In `stack` mode the head coordinates both Sparks over
-QSFP. See the [update prerequisites and recovery commands](docs/UPDATES.md)
+`sudo ragspark update --from /path/to/bundle`. In `stack` mode the head
+coordinates both Sparks over QSFP. See the [signed update guide](docs/INSTALL.md#signed-updates)
 and the [live U4.4 validation](docs/VALIDATION.md#20-signed-updates-on-a-spark-pair-u44).
-Full offline bundles and stable-channel publication are planned for U5 and U6.
+Stable-channel publication is planned for U6.
 
 ## Design principles
 
