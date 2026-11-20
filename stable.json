@@ -1,0 +1,14 @@
+{
+  "channel": "stable",
+  "expires_at": "2026-12-04T12:56:45Z",
+  "format": 1,
+  "issued_at": "2026-11-20T12:56:45Z",
+  "manifest_bytes": 47696,
+  "manifest_sha256": "63f1a1e18ad24db3cc075c4a8916dc7adbab5cfadde6c870ba0ae80c74f100ba",
+  "manifest_url": "https://github.com/0ffch41n/ragspark/releases/download/v0.1.0/release.json",
+  "product": "ragspark",
+  "release_sequence": 1,
+  "sequence": 1,
+  "signature_url": "https://github.com/0ffch41n/ragspark/releases/download/v0.1.0/release.json.sig",
+  "version": "0.1.0"
+}
