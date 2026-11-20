@@ -248,6 +248,26 @@ answer" text. Background: D19 in [DECISIONS.md](DECISIONS.md).
 
 `--lang` and `--yes` work with every command.
 
+## Health monitoring
+
+Enable the optional checks on each Spark you want to monitor. Run
+`sudo ragspark monitor` for an immediate check, or
+`sudo ragspark monitor --schedule off` to disable periodic checks.
+
+```bash
+sudo ragspark monitor --schedule on
+sudo ragspark status
+sudo journalctl -u ragspark-monitor.service
+```
+
+The timer checks the model services, RAGFlow on the head and the QSFP link
+in stack mode. It checks for at least 25 GiB of free space on the filesystems
+used by RAGSpark. If backups or replication are configured, it checks for a
+successful result within 48 hours. After two failed checks about two minutes
+apart it records an incident in the system journal. It records recovery
+after a successful check. `ragspark status` displays the latest result.
+The checks leave containers running in their existing state.
+
 ## Signed updates
 
 A first update requires an independent runner, a trusted publisher key and a

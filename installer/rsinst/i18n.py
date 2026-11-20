@@ -5,6 +5,23 @@ that both texts are filled in and that their {placeholders} match.
 """
 
 MESSAGES = {
+    "mon_web": ("RAGFlow", "RAGFlow"),
+    "mon_models": ("model services", "сервисы моделей"),
+    "mon_peer": ("QSFP link", "связь по QSFP"),
+    "mon_disk": ("free disk space", "свободное место на диске"),
+    "mon_backup": ("backup freshness", "свежесть бэкапа"),
+    "mon_replica": ("replication status", "состояние репликации"),
+    "mon_failed": ("Health monitor: check {checks}", "Мониторинг: проверьте {checks}"),
+    "mon_recovered": ("Health monitor: recovered {checks}", "Мониторинг: восстановились {checks}"),
+    "mon_pending": ("Health monitor: confirming {checks}", "Мониторинг: повторная проверка — {checks}"),
+    "mon_ok": ("Health checks passed", "Проверки мониторинга пройдены"),
+    "mon_waiting": ("Health monitor: waiting for a recent check", "Мониторинг: ожидается свежая проверка"),
+    "mon_on": ("Scheduled health checks enabled", "Мониторинг по расписанию включён"),
+    "mon_off": ("Scheduled health checks disabled", "Мониторинг по расписанию выключен"),
+    "mon_schedule_failed": ("Could not change the health monitor timer. Check systemctl status ragspark-monitor.timer.",
+                            "Не удалось изменить таймер мониторинга. Проверьте systemctl status ragspark-monitor.timer."),
+    "mon_unit_conflict": ("Existing systemd file differs: {path}", "Существующий файл systemd отличается: {path}"),
+    "mon_error": ("Health monitor error: {detail}", "Ошибка мониторинга: {detail}"),
     "pair_requires_install": ("Install RAGSpark on this unit before pairing.",
                               "Сначала установите RAGSpark на этом Spark."),
     "pair_none": ("No update pairing is configured.", "Привязка для обновлений не настроена."),

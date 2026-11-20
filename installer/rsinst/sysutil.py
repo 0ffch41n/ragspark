@@ -86,9 +86,9 @@ def compose(args, capture=True, stdin=None, timeout=None):
                stdin=stdin, timeout=timeout, log_output="config" not in args)
 
 
-def compose_json(args):
+def compose_json(args, timeout=None):
     """docker compose ... --format json; accepts one array or one object per line."""
-    code, out = compose(args + ["--format", "json"])
+    code, out = compose(args + ["--format", "json"], timeout=timeout)
     if code != 0:
         return None
     out = out.strip()

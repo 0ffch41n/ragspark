@@ -24,9 +24,9 @@ def _health_url(config):
     return "http://%s:%s/api/v1/system/healthz" % (host, config.get("http_port", 80))
 
 
-def services():
+def services(timeout=None):
     """[(service, state, health)] for the installed project."""
-    rows = compose_json(["ps", "--all"]) or []
+    rows = compose_json(["ps", "--all"], timeout=timeout) or []
     out = []
     for r in rows:
         state = r.get("State", "?")
@@ -34,6 +34,17 @@ def services():
         health = (r.get("Health", "") or "") if state == "running" else ""
         out.append((r.get("Service", "?"), state, health))
     return sorted(out)
+
+
+def ragflow_health(config):
+    try:
+        with urllib.request.urlopen(_health_url(config), timeout=5) as response:
+            data = json.loads(response.read(65536))
+        if isinstance(data, dict):
+            return data
+        return {"status": "nok", "error": "invalid health response"}
+    except Exception as exc:  # noqa: BLE001 - a failed health request is a failed probe
+        return {"status": "nok", "error": str(exc)[:80]}
 
 
 def status(args):
@@ -97,6 +108,8 @@ def status(args):
                           state="OK" if remote_status["ok"] else "FAIL", hours=age))
             except (OSError, ValueError, KeyError, TypeError):
                 ui.status("WARN", ui.t("status_backup_remote_wait"))
+    from . import monitor
+    monitor.show_status(m)
     if node:
         from . import backup, backup_remote
         if os.path.isfile(paths.host(backup_remote.BASE + "/receiver.json")):
@@ -109,11 +122,7 @@ def status(args):
         ok = stackmode.http_ok("http://%s:8000/health" % head_ip)
         ui.status("OK" if ok else "WARN", ui.t("status_head_api" if ok else "status_head_api_down", head=head_ip))
         return 0 if ok else 1
-    try:
-        with urllib.request.urlopen(_health_url(c), timeout=5) as r:
-            data = json.loads(r.read().decode())
-    except Exception as e:  # noqa: BLE001 - any failure means "not answering"
-        data = {"status": "nok", "error": str(e)[:80]}
+    data = ragflow_health(c)
     ok = data.get("status") == "ok"
     ui.status("OK" if ok else "WARN", ui.t("status_health", detail=json.dumps(data, ensure_ascii=False)))
     return 0 if ok else 1

@@ -116,7 +116,7 @@ LLM's own vision: about 20 s a page with the default LLM, about 7 with Qwen 3.6.
   - [x] 5.4 — production on two units, a crash and a reboot ([docs/VALIDATION.md](docs/VALIDATION.md), §18)
 - [ ] **Stage 6** — backups, optional monitoring, offline bundle
   - [x] 6.1 — local backups, verified replication and isolated data recovery ([docs/INSTALL.md](docs/INSTALL.md), [docs/VALIDATION.md](docs/VALIDATION.md), §19)
-  - [ ] 6.2 — optional monitoring
+  - [x] 6.2 — optional health monitoring ([docs/INSTALL.md](docs/INSTALL.md#health-monitoring))
   - [ ] 6.3 — full offline bundle (deferred)
 
 Prepared installations can apply signed code updates with

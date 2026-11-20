@@ -76,6 +76,11 @@ def uninstall(args):
         ui.say(ui.t("cancelled"))
         return 1
 
+    if data.get("monitor_timer"):
+        from . import monitor
+        if not monitor.stop(manifest):
+            ui.say(ui.t("un_aborted"))
+            return 1
     if data.get("timer"):
         run(["systemctl", "disable", "--now", data["timer"]])
     if data.get("backup_timer"):
